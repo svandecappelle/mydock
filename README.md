@@ -10,6 +10,7 @@ libwnck (tested on LXQt + Openbox + compton).
 - Dot under running apps; separator between pinned and other running apps
 - Click to launch, raise, cycle windows, or minimize; middle-click for a new instance
 - Right-click menu: window list, New Window, Keep in Dock, Quit
+- Drag and drop to reorder icons; drop a running app among the pinned ones to pin it
 - Reserves screen space so maximized windows stay clear of the dock
 - Attach to any screen edge: bottom, top, left or right
 - Optional panel mode: stretch the bar along the whole screen edge
@@ -60,6 +61,9 @@ Changes apply to the dock immediately and are saved automatically.
 | Apps | pinned apps: add (searchable list), remove, reorder |
 
 **Reset to Defaults** restores every setting except the pinned apps.
+
+You can also drag icons in the dock to reorder them. Dropping a running,
+unpinned app among the pinned ones pins it at that spot.
 
 Settings are stored in `~/.config/macdock/config.ini`. You can also edit that
 file by hand, then restart the dock:
@@ -119,6 +123,18 @@ inset from the start or end of the edge. The same anchor is used for the
 unmagnified layout, which measures pointer distance, and for the magnified
 one. So with start or end alignment the anchored end stays put, and zooming
 grows the row away from it. Without expand mode the bar follows the row.
+
+**Drag and drop.** Pressing an icon and moving more than 8px starts a drag.
+The dragged item leaves the layout, and an empty `SLOT_GAP` takes its place
+at the drop position. The icon is painted at the pointer, held where it was
+grabbed. The drop position comes from the current layout: how many icons the
+dragged icon's centre has passed, and which side of the separator it is on.
+The gap only swaps with a neighbour once the centre passes that neighbour's
+centre, so it never flickers between two places. Pinned icons stay in the
+pinned group. Running apps can be pinned by dropping them there. On release,
+`app_tracker_move_item()` applies the move and saves the pinned order. The
+button press gives the dock an implicit pointer grab, so the drag keeps
+working outside the input shape.
 
 **Auto-hide.** `hide` animates between 0 (shown) and 1 (hidden), eased like
 the zoom. `to_window()` moves everything toward the screen edge by

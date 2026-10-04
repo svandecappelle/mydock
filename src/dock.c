@@ -19,6 +19,7 @@
 #define HIDE_DELAY_MS 500   /* auto-hide: wait this long after the pointer leaves */
 #define HIDE_SPEED 10.0     /* auto-hide slide speed, like ZOOM_SPEED */
 #define TRIGGER_SIZE 2      /* auto-hide: depth of the strip at the screen edge that reveals the dock */
+#define DRAG_THRESHOLD 8    /* pointer travel (px) that turns a press on an icon into a drag */
 
 typedef double Rgba[4];
 
@@ -52,8 +53,15 @@ static const Theme theme_light = {
 
 /* Where one dock entry is drawn this frame, in dock coordinates (see
  * to_window): `pos` and `len` run along the dock. */
+typedef enum {
+    SLOT_ICON,
+    SLOT_SEPARATOR, /* between pinned and other running apps */
+    SLOT_GAP,       /* where the icon being dragged will land */
+} SlotKind;
+
 typedef struct {
-    DockItem *item; /* NULL for the separator */
+    SlotKind kind;
+    DockItem *item; /* SLOT_ICON only */
     double pos, len;
     double scale;
     double lift;    /* bounce offset in px, away from the screen edge */
@@ -80,6 +88,12 @@ struct Dock {
     guint hide_timeout_id;
     gboolean pointer_inside;
     DockItem *hovered, *pressed;
+    double press_x, press_y; /* where the button went down, window coordinates */
+    double grab_fx, grab_fy; /* where the pressed icon was grabbed, as a fraction of its size */
+    DockItem *drag_item;  /* icon being dragged to a new place, or NULL */
+    double drag_x, drag_y; /* pointer during the drag, window coordinates */
+    guint drop_index;     /* where it lands: index in the pinned group or the running group */
+    gboolean drop_pinned;
     GArray *slots;        /* Slot */
     double bar_pos, bar_len;
     double size;          /* icon size in use: the configured size, shrunk if the dock would not fit */
@@ -322,16 +336,37 @@ static void layout(Dock *d)
     fit_size(d, items);
     double s = d->size, gap = spacing(d);
 
-    g_array_set_size(d->slots, 0);
+    /* The entries to show: items in order (pinned first), except the one being
+     * dragged, which leaves a gap (NULL) at the place it would land. */
+    GPtrArray *entries = g_ptr_array_new();
+    guint n_pinned = 0;
     for (guint i = 0; i < items->len; i++) {
         DockItem *item = g_ptr_array_index(items, i);
-        if (i > 0 && ((DockItem *)g_ptr_array_index(items, i - 1))->pinned && !item->pinned) {
-            Slot sep = { .item = NULL, .len = MAX(2, round(s / 4)), .scale = 1 };
+        if (item == d->drag_item)
+            continue;
+        g_ptr_array_add(entries, item);
+        n_pinned += item->pinned;
+    }
+    if (d->drag_item) {
+        guint at = d->drop_pinned ? MIN(d->drop_index, n_pinned)
+                                  : n_pinned + MIN(d->drop_index, entries->len - n_pinned);
+        g_ptr_array_insert(entries, at, NULL);
+    }
+
+    g_array_set_size(d->slots, 0);
+    gboolean prev_pinned = FALSE;
+    for (guint i = 0; i < entries->len; i++) {
+        DockItem *item = g_ptr_array_index(entries, i);
+        gboolean pinned = item ? item->pinned : d->drop_pinned;
+        if (i > 0 && prev_pinned && !pinned) {
+            Slot sep = { .kind = SLOT_SEPARATOR, .len = MAX(2, round(s / 4)), .scale = 1 };
             g_array_append_val(d->slots, sep);
         }
-        Slot slot = { .item = item, .len = s, .scale = 1 };
+        Slot slot = { .kind = item ? SLOT_ICON : SLOT_GAP, .item = item, .len = s, .scale = 1 };
         g_array_append_val(d->slots, slot);
+        prev_pinned = pinned;
     }
+    g_ptr_array_free(entries, TRUE);
     guint n = d->slots->len;
     double gaps = gap * (n > 0 ? n - 1 : 0);
 
@@ -345,7 +380,7 @@ static void layout(Dock *d)
         Slot *sl = &g_array_index(d->slots, Slot, i);
         double base_center = a + sl->len / 2;
         a += sl->len + gap;
-        if (!sl->item)
+        if (sl->kind != SLOT_ICON)
             continue;
         if (d->has_mouse_pos && d->zoom > 0) {
             double dist = fabs(d->mouse_pos - base_center) / (s + gap);
@@ -532,6 +567,23 @@ static void schedule_hide(Dock *d)
     d->hide_timeout_id = g_timeout_add(HIDE_DELAY_MS, on_hide_timeout, d);
 }
 
+/* The pointer left the dock: shrink back, and hide it if auto-hiding. */
+static void pointer_left(Dock *d)
+{
+    d->zoom_target = 0;
+    d->hovered = NULL;
+    d->pressed = NULL;
+    d->pointer_inside = FALSE;
+    schedule_hide(d);
+    animate(d);
+}
+
+static gboolean over_dock(Dock *d, double x, double y)
+{
+    const cairo_rectangle_int_t *r = &d->input_rect;
+    return x >= r->x && x < r->x + r->width && y >= r->y && y < r->y + r->height;
+}
+
 /* ---- drawing ------------------------------------------------------------- */
 
 static gboolean menu_open(Dock *d)
@@ -589,13 +641,11 @@ static void draw_separator(Dock *d, cairo_t *cr, const Slot *sl)
     cairo_stroke(cr);
 }
 
-static void draw_icon(Dock *d, cairo_t *cr, const Slot *sl)
+/* Paint `item`'s icon into `r`; crisp when drawn at its rest size. */
+static void paint_icon(Dock *d, cairo_t *cr, DockItem *item, Rect r, double scale, gboolean darken)
 {
-    DockItem *item = sl->item;
     int sf = gtk_widget_get_scale_factor(d->area);
-    Rect r = icon_rect(d, sl);
-
-    gboolean at_rest = sl->scale < 1.02;
+    gboolean at_rest = scale < 1.02;
     GdkPixbuf *pixbuf;
     if (at_rest) { /* pixel-exact icon when not zoomed, so it stays crisp */
         r = (Rect){ round(r.x), round(r.y), d->size, d->size };
@@ -612,13 +662,19 @@ static void draw_icon(Dock *d, cairo_t *cr, const Slot *sl)
     if (!at_rest)
         cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_BEST);
     cairo_paint(cr);
-    if (item == d->pressed) { /* darken the icon while the button is held */
+    if (darken) {
         cairo_pattern_t *mask = cairo_pattern_reference(cairo_get_source(cr));
         cairo_set_source_rgba(cr, 0, 0, 0, 0.35);
         cairo_mask(cr, mask);
         cairo_pattern_destroy(mask);
     }
     cairo_restore(cr);
+}
+
+static void draw_icon(Dock *d, cairo_t *cr, const Slot *sl)
+{
+    DockItem *item = sl->item;
+    paint_icon(d, cr, item, icon_rect(d, sl), sl->scale, item == d->pressed); /* darkened while held */
 
     if (item->windows) { /* running indicator, between the icon and the screen edge */
         Rect dot = to_window(d, sl->pos + sl->len / 2, d->cfg->margin + padding(d) / 2, 0, 0);
@@ -631,6 +687,21 @@ static void draw_icon(Dock *d, cairo_t *cr, const Slot *sl)
 
 /* The app name in a rounded box beside the hovered icon, on the side away
  * from the screen edge, with a small arrow pointing at the icon. */
+/* Top-left corner of the dragged icon, in window coordinates: it follows the
+ * pointer, held where it was grabbed. */
+static void drag_icon_origin(Dock *d, double *x, double *y)
+{
+    *x = d->drag_x - d->grab_fx * d->size;
+    *y = d->drag_y - d->grab_fy * d->size;
+}
+
+static void draw_dragged_icon(Dock *d, cairo_t *cr)
+{
+    double x, y;
+    drag_icon_origin(d, &x, &y);
+    paint_icon(d, cr, d->drag_item, (Rect){ x, y, d->size, d->size }, 1.0, FALSE);
+}
+
 static void draw_label(Dock *d, cairo_t *cr, const Slot *sl)
 {
     PangoLayout *pl = pango_cairo_create_layout(cr);
@@ -695,11 +766,13 @@ static gboolean on_draw(GtkWidget *widget, cairo_t *cr, Dock *d)
     draw_bar(d, cr);
     for (guint i = 0; i < d->slots->len; i++) {
         const Slot *sl = &g_array_index(d->slots, Slot, i);
-        if (sl->item)
+        if (sl->kind == SLOT_ICON)
             draw_icon(d, cr, sl);
-        else
+        else if (sl->kind == SLOT_SEPARATOR)
             draw_separator(d, cr, sl);
     }
+    if (d->drag_item)
+        draw_dragged_icon(d, cr);
     if (d->cfg->show_labels && d->hovered && d->zoom > 0.5 && !menu_open(d)) {
         const Slot *sl = slot_for_item(d, d->hovered);
         if (sl)
@@ -751,14 +824,10 @@ static void on_menu_closed(GtkMenuShell *menu, Dock *d)
     GdkDevice *pointer = gdk_seat_get_pointer(gdk_display_get_default_seat(gdk_display_get_default()));
     int px, py;
     gdk_window_get_device_position(gtk_widget_get_window(d->area), pointer, &px, &py, NULL);
-    cairo_rectangle_int_t *r = &d->input_rect;
-    if (!(px >= r->x && px < r->x + r->width && py >= r->y && py < r->y + r->height)) {
-        d->zoom_target = 0;
-        d->hovered = NULL;
-        d->pointer_inside = FALSE;
-        schedule_hide(d);
-    }
-    animate(d);
+    if (!over_dock(d, px, py))
+        pointer_left(d);
+    else
+        animate(d);
 }
 
 static void menu_append(GtkWidget *menu, const char *label, GCallback callback, Dock *d)
@@ -832,10 +901,104 @@ static void show_menu(Dock *d, const Slot *sl, GdkEvent *event)
 
 /* ---- input --------------------------------------------------------------- */
 
+/* ---- drag and drop ------------------------------------------------------- */
+
+static void set_cursor(Dock *d, const char *name)
+{
+    GdkWindow *window = gtk_widget_get_window(d->area);
+    g_autoptr(GdkCursor) cursor = name ? gdk_cursor_new_from_name(gdk_window_get_display(window), name) : NULL;
+    gdk_window_set_cursor(window, cursor);
+}
+
+/* Work out where the dragged icon would land, from the current layout: the
+ * icons it has passed, and which side of the separator it is on. Because the
+ * other icons move as the gap moves, the gap only swaps with a neighbour once
+ * the dragged icon's centre passes that neighbour's centre, so it never
+ * flickers between two places. */
+static void update_drop_target(Dock *d)
+{
+    double x, y;
+    drag_icon_origin(d, &x, &y);
+    double center = along(d, x + d->size / 2, y + d->size / 2);
+
+    guint before_pinned = 0, before_running = 0, n_pinned = 0;
+    gboolean has_separator = FALSE;
+    double separator_center = 0;
+    for (guint i = 0; i < d->slots->len; i++) {
+        const Slot *sl = &g_array_index(d->slots, Slot, i);
+        double c = sl->pos + sl->len / 2;
+        if (sl->kind == SLOT_SEPARATOR) {
+            has_separator = TRUE;
+            separator_center = c;
+        } else if (sl->kind == SLOT_ICON) {
+            if (sl->item->pinned)
+                n_pinned++, before_pinned += c < center;
+            else
+                before_running += c < center;
+        }
+    }
+
+    DockItem *item = d->drag_item;
+    gboolean to_pinned;
+    if (item->pinned)
+        to_pinned = TRUE; /* pinned icons reorder within the pinned group */
+    else if (!item->app_info)
+        to_pinned = FALSE; /* no .desktop file: can't be pinned */
+    else if (has_separator)
+        to_pinned = center < separator_center;
+    else
+        to_pinned = before_pinned < n_pinned; /* past the last pinned icon: stays unpinned */
+
+    guint index = to_pinned ? before_pinned : before_running;
+    if (index != d->drop_index || to_pinned != d->drop_pinned) {
+        d->drop_index = index;
+        d->drop_pinned = to_pinned;
+    }
+}
+
+static void start_drag(Dock *d)
+{
+    DockItem *item = d->pressed;
+    GPtrArray *items = app_tracker_items(d->tracker);
+    guint index = 0; /* the item's current place in its group: where it lands if dropped now */
+    for (guint i = 0; i < items->len; i++) {
+        DockItem *it = g_ptr_array_index(items, i);
+        if (it == item)
+            break;
+        index += it->pinned == item->pinned;
+    }
+    d->drag_item = item;
+    d->drop_index = index;
+    d->drop_pinned = item->pinned;
+    d->pressed = NULL;
+    d->hovered = NULL;
+    d->zoom_target = 0; /* keep the row still while rearranging it */
+    set_cursor(d, "grabbing");
+}
+
+static void end_drag(Dock *d)
+{
+    d->drag_item = NULL;
+    set_cursor(d, NULL);
+}
+
+/* ---- input --------------------------------------------------------------- */
+
 static gboolean on_motion(GtkWidget *widget, GdkEvent *event, Dock *d)
 {
     double x, y;
     gdk_event_get_coords(event, &x, &y);
+    if (d->pressed && !d->drag_item && hypot(x - d->press_x, y - d->press_y) > DRAG_THRESHOLD)
+        start_drag(d);
+    if (d->drag_item) {
+        d->drag_x = x;
+        d->drag_y = y;
+        update_drop_target(d);
+        refresh(d);
+        animate(d);
+        return FALSE;
+    }
+
     d->mouse_pos = along(d, x, y);
     d->has_mouse_pos = TRUE;
     d->zoom_target = 1;
@@ -850,14 +1013,11 @@ static gboolean on_motion(GtkWidget *widget, GdkEvent *event, Dock *d)
 
 static gboolean on_leave(GtkWidget *widget, GdkEventCrossing *event, Dock *d)
 {
-    if (menu_open(d))
+    /* While a button is held the dock keeps the pointer (an implicit grab), so
+     * leaving is handled on release instead. */
+    if (menu_open(d) || d->pressed || d->drag_item)
         return FALSE;
-    d->zoom_target = 0;
-    d->hovered = NULL;
-    d->pressed = NULL;
-    d->pointer_inside = FALSE;
-    schedule_hide(d);
-    animate(d);
+    pointer_left(d);
     return FALSE;
 }
 
@@ -869,7 +1029,12 @@ static gboolean on_press(GtkWidget *widget, GdkEventButton *event, Dock *d)
     if (event->button == GDK_BUTTON_SECONDARY) {
         show_menu(d, sl, (GdkEvent *)event);
     } else if (sl) {
+        Rect r = icon_rect(d, sl);
         d->pressed = sl->item;
+        d->press_x = event->x;
+        d->press_y = event->y;
+        d->grab_fx = CLAMP((event->x - r.x) / r.w, 0, 1);
+        d->grab_fy = CLAMP((event->y - r.y) / r.h, 0, 1);
         gtk_widget_queue_draw(d->area);
     }
     return TRUE;
@@ -877,16 +1042,24 @@ static gboolean on_press(GtkWidget *widget, GdkEventButton *event, Dock *d)
 
 static gboolean on_release(GtkWidget *widget, GdkEventButton *event, Dock *d)
 {
-    DockItem *pressed = d->pressed;
-    d->pressed = NULL;
-    Slot *sl = slot_at(d, along(d, event->x, event->y));
-    if (pressed && sl && sl->item == pressed) {
-        if (event->button == GDK_BUTTON_PRIMARY)
-            app_tracker_activate(d->tracker, pressed, event->time);
-        else if (event->button == GDK_BUTTON_MIDDLE)
-            app_tracker_launch(d->tracker, pressed, event->time);
+    if (d->drag_item) {
+        DockItem *item = d->drag_item;
+        end_drag(d);
+        app_tracker_move_item(d->tracker, item, d->drop_index, d->drop_pinned);
+    } else {
+        DockItem *pressed = d->pressed;
+        d->pressed = NULL;
+        Slot *sl = slot_at(d, along(d, event->x, event->y));
+        if (pressed && sl && sl->item == pressed && over_dock(d, event->x, event->y)) {
+            if (event->button == GDK_BUTTON_PRIMARY)
+                app_tracker_activate(d->tracker, pressed, event->time);
+            else if (event->button == GDK_BUTTON_MIDDLE)
+                app_tracker_launch(d->tracker, pressed, event->time);
+        }
     }
-    gtk_widget_queue_draw(d->area);
+    refresh(d);
+    if (!over_dock(d, event->x, event->y))
+        pointer_left(d);
     return TRUE;
 }
 
@@ -908,6 +1081,8 @@ static void on_item_removed(DockItem *item, gpointer data)
         d->hovered = NULL;
     if (d->pressed == item)
         d->pressed = NULL;
+    if (d->drag_item == item) /* the app closed while being dragged */
+        end_drag(d);
     if (d->menu_item == item) {
         d->menu_item = NULL;
         if (d->menu)

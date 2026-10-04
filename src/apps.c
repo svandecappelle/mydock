@@ -441,6 +441,31 @@ void app_tracker_set_pinned_ids(AppTracker *t, const char *const *ids)
     notify(t);
 }
 
+void app_tracker_move_item(AppTracker *t, DockItem *item, guint index, gboolean to_pinned)
+{
+    if (!g_ptr_array_remove(t->items, item))
+        return;
+    if (!item->app_info)
+        to_pinned = FALSE;
+    item->pinned = to_pinned;
+
+    guint n_pinned = 0;
+    while (n_pinned < t->items->len && ((DockItem *)g_ptr_array_index(t->items, n_pinned))->pinned)
+        n_pinned++;
+    guint pos = to_pinned ? MIN(index, n_pinned) : n_pinned + MIN(index, t->items->len - n_pinned);
+    g_ptr_array_insert(t->items, pos, item);
+
+    GPtrArray *ids = g_ptr_array_new();
+    for (guint i = 0; i < t->items->len; i++) {
+        DockItem *it = g_ptr_array_index(t->items, i);
+        if (it->pinned)
+            g_ptr_array_add(ids, g_strdup(it->key));
+    }
+    g_ptr_array_add(ids, NULL);
+    dock_config_set_pinned(t->cfg, (char **)g_ptr_array_free(ids, FALSE));
+    notify(t);
+}
+
 void app_tracker_set_pinned(AppTracker *t, DockItem *item, gboolean pinned)
 {
     if (item->pinned == pinned || !item->app_info)

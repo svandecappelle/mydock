@@ -43,3 +43,7 @@ void app_tracker_close_all(AppTracker *t, DockItem *item, guint32 timestamp);
 void app_tracker_set_pinned(AppTracker *t, DockItem *item, gboolean pinned);
 /* Pins exactly `ids` (NULL-terminated), in that order, and saves the config. */
 void app_tracker_set_pinned_ids(AppTracker *t, const char *const *ids);
+/* Moves `item` to position `index` of the pinned group (`to_pinned`) or of the
+ * group of other running apps. Dropping an unpinned app among the pinned ones
+ * pins it; apps without a .desktop file can't be pinned. Saves the config. */
+void app_tracker_move_item(AppTracker *t, DockItem *item, guint index, gboolean to_pinned);
