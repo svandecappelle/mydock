@@ -13,9 +13,16 @@ typedef enum {
     DOCK_RIGHT,
 } DockPosition;
 
+typedef enum {
+    ALIGN_CENTER,
+    ALIGN_START, /* left, or top on a vertical dock */
+    ALIGN_END,   /* right, or bottom on a vertical dock */
+} DockAlignment;
+
 /* User configuration, stored in ~/.config/macdock/config.ini. */
 typedef struct {
     DockPosition position;  /* screen edge the dock is attached to */
+    DockAlignment alignment; /* where the icons sit along that edge */
     int icon_size;          /* icon size at rest, in px: the overall dock size */
     double max_scale;       /* magnification of the icon under the pointer */
     double magnify_range;   /* how many neighbouring icons the zoom spreads over */
@@ -42,3 +49,5 @@ void dock_config_set_pinned(DockConfig *cfg, char **ids);
 
 const char *dock_position_to_string(DockPosition position);
 DockPosition dock_position_from_string(const char *name); /* DOCK_BOTTOM if unknown */
+const char *dock_alignment_to_string(DockAlignment alignment);
+DockAlignment dock_alignment_from_string(const char *name); /* ALIGN_CENTER if unknown */

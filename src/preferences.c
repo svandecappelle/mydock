@@ -14,7 +14,7 @@ struct Preferences {
 
     GtkWidget *theme, *icon_size, *corner_radius, *show_labels;
     GtkWidget *magnify, *zoom, *spread;
-    GtkWidget *position, *monitor, *expand, *autohide, *reserve_space, *spacing, *padding, *margin;
+    GtkWidget *position, *alignment, *monitor, *expand, *autohide, *reserve_space, *spacing, *padding, *margin;
     GtkWidget *apps_list, *remove_button, *up_button, *down_button;
 
     double zoom_value;   /* zoom shown in the slider, kept while magnification is off */
@@ -112,6 +112,15 @@ static void on_position_changed(GtkComboBox *combo, Preferences *p)
     changed(p);
 }
 
+static void on_alignment_changed(GtkComboBox *combo, Preferences *p)
+{
+    const char *id = gtk_combo_box_get_active_id(combo);
+    if (!id)
+        return;
+    p->cfg->alignment = dock_alignment_from_string(id);
+    changed(p);
+}
+
 static void on_monitor_changed(GtkComboBox *combo, Preferences *p)
 {
     const char *id = gtk_combo_box_get_active_id(combo);
@@ -142,6 +151,7 @@ static void load_values(Preferences *p)
     gtk_widget_set_sensitive(p->spread, magnify);
 
     gtk_combo_box_set_active_id(GTK_COMBO_BOX(p->position), dock_position_to_string(c->position));
+    gtk_combo_box_set_active_id(GTK_COMBO_BOX(p->alignment), dock_alignment_to_string(c->alignment));
     g_autofree char *monitor_id = g_strdup_printf("%d", c->monitor);
     if (!gtk_combo_box_set_active_id(GTK_COMBO_BOX(p->monitor), monitor_id))
         gtk_combo_box_set_active_id(GTK_COMBO_BOX(p->monitor), "-1");
@@ -295,6 +305,12 @@ static GtkWidget *build_position_page(Preferences *p)
     gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(p->position), "right", "Right");
     g_signal_connect(p->position, "changed", G_CALLBACK(on_position_changed), p);
     add_row(grid, "Position on screen", NULL, p->position);
+    p->alignment = gtk_combo_box_text_new();
+    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(p->alignment), "start", "Start");
+    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(p->alignment), "center", "Center");
+    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(p->alignment), "end", "End");
+    g_signal_connect(p->alignment, "changed", G_CALLBACK(on_alignment_changed), p);
+    add_row(grid, "Icon alignment", "Start is left (or top on a vertical dock); End is right (or bottom)", p->alignment);
     p->monitor = gtk_combo_box_text_new();
     gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(p->monitor), "-1", "Primary monitor");
     GdkDisplay *display = gdk_display_get_default();

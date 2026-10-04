@@ -298,9 +298,23 @@ static void fit_size(Dock *d, GPtrArray *items)
         d->size = MAX(MIN_ICON_SIZE, floor(room / per_px));
 }
 
+/* Where a row of icons `total` long starts along the dock, for the
+ * configured alignment. At the start or end, the row keeps the bar padding
+ * from the screen end (plus a small gap when the bar does not fill the edge). */
+static double row_start(Dock *d, double total)
+{
+    double inset = padding(d) + (d->cfg->expand ? 0 : SCREEN_END_GAP);
+    switch (d->cfg->alignment) {
+    case ALIGN_START: return inset;
+    case ALIGN_END:   return dock_length(d) - inset - total;
+    default:          return (dock_length(d) - total) / 2;
+    }
+}
+
 /* Compute this frame's slots. Each icon's scale depends on its distance to
  * the pointer, measured on the *unmagnified* layout so it is stable; then the
- * magnified row is re-centred, so the bar grows to both sides. */
+ * magnified row is placed again: centred (the bar grows to both sides) or
+ * anchored at the start or end of the edge. */
 static void layout(Dock *d)
 {
     const DockConfig *cfg = d->cfg;
@@ -321,12 +335,11 @@ static void layout(Dock *d)
     guint n = d->slots->len;
     double gaps = gap * (n > 0 ? n - 1 : 0);
 
-    double center = dock_length(d) / 2;
     double base_total = gaps;
     for (guint i = 0; i < n; i++)
         base_total += g_array_index(d->slots, Slot, i).len;
 
-    double a = center - base_total / 2;
+    double a = row_start(d, base_total);
     gint64 now = g_get_monotonic_time();
     for (guint i = 0; i < n; i++) {
         Slot *sl = &g_array_index(d->slots, Slot, i);
@@ -346,7 +359,7 @@ static void layout(Dock *d)
     double total = gaps;
     for (guint i = 0; i < n; i++)
         total += g_array_index(d->slots, Slot, i).len;
-    a = center - total / 2;
+    a = row_start(d, total); /* magnification grows the row away from its anchored end */
     for (guint i = 0; i < n; i++) {
         Slot *sl = &g_array_index(d->slots, Slot, i);
         sl->pos = a;
@@ -354,7 +367,7 @@ static void layout(Dock *d)
     }
 
     d->bar_len = MAX(total, s) + 2 * padding(d);
-    d->bar_pos = center - d->bar_len / 2;
+    d->bar_pos = row_start(d, MAX(total, s)) - padding(d);
     if (d->cfg->expand) {
         /* Span the whole edge. Overshoot both ends by the corner radius so the
          * rounded corners fall outside the window and the ends look square. */

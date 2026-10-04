@@ -13,6 +13,7 @@ libwnck (tested on LXQt + Openbox + compton).
 - Reserves screen space so maximized windows stay clear of the dock
 - Attach to any screen edge: bottom, top, left or right
 - Optional panel mode: stretch the bar along the whole screen edge
+- Icons centred, or aligned at the start or end of the edge
 - Optional auto-hide: the dock slides away and comes back when the pointer touches the screen edge
 - One "Dock size" setting scales the whole dock; it shrinks automatically when the icons would not fit the screen edge
 
@@ -55,7 +56,7 @@ Changes apply to the dock immediately and are saved automatically.
 | tab | settings |
 |---|---|
 | Appearance | theme, dock size, corner radius, app-name labels, magnification (on/off, zoom, spread) |
-| Position | screen edge (bottom/top/left/right), monitor, extend to screen edges, auto-hide, reserve screen space, icon spacing, bar padding, distance from screen edge |
+| Position | screen edge (bottom/top/left/right), icon alignment (start/center/end), monitor, extend to screen edges, auto-hide, reserve screen space, icon spacing, bar padding, distance from screen edge |
 | Apps | pinned apps: add (searchable list), remove, reorder |
 
 **Reset to Defaults** restores every setting except the pinned apps.
@@ -66,6 +67,7 @@ file by hand, then restart the dock:
 | key | default | meaning |
 |---|---|---|
 | `position` | `bottom` | screen edge: `bottom`, `top`, `left` or `right` |
+| `alignment` | `center` | `start` (left/top), `center` or `end` (right/bottom) |
 | `icon_size` | 48 | dock size: icon size at rest (px) |
 | `max_scale` | 1.8 | zoom factor of the icon under the pointer (1 = off) |
 | `magnify_range` | 3 | number of neighbouring icons affected by the zoom |
@@ -111,6 +113,12 @@ dock the window is wider, to make room for labels beside the icons.
 length. It overshoots both ends by the corner radius, so the rounded corners
 fall outside the window and the ends look square. The icons, magnification
 and input handling don't change.
+
+**Alignment.** `row_start()` places the icon row centred, or at a fixed
+inset from the start or end of the edge. The same anchor is used for the
+unmagnified layout, which measures pointer distance, and for the magnified
+one. So with start or end alignment the anchored end stays put, and zooming
+grows the row away from it. Without expand mode the bar follows the row.
 
 **Auto-hide.** `hide` animates between 0 (shown) and 1 (hidden), eased like
 the zoom. `to_window()` moves everything toward the screen edge by
