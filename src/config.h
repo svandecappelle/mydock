@@ -27,6 +27,7 @@ typedef struct {
     int monitor;            /* -1 = primary monitor */
     gboolean reserve_space; /* keep maximized windows above the dock */
     gboolean autohide;      /* slide out of view until the pointer touches the screen edge */
+    gboolean expand;        /* stretch the bar along the whole screen edge, like a panel */
     gboolean show_labels;
     char **pinned;          /* NULL-terminated list of desktop ids */
     char *path;

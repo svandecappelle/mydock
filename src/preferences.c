@@ -14,7 +14,7 @@ struct Preferences {
 
     GtkWidget *theme, *icon_size, *corner_radius, *show_labels;
     GtkWidget *magnify, *zoom, *spread;
-    GtkWidget *position, *monitor, *autohide, *reserve_space, *spacing, *padding, *margin;
+    GtkWidget *position, *monitor, *expand, *autohide, *reserve_space, *spacing, *padding, *margin;
     GtkWidget *apps_list, *remove_button, *up_button, *down_button;
 
     double zoom_value;   /* zoom shown in the slider, kept while magnification is off */
@@ -146,6 +146,7 @@ static void load_values(Preferences *p)
     if (!gtk_combo_box_set_active_id(GTK_COMBO_BOX(p->monitor), monitor_id))
         gtk_combo_box_set_active_id(GTK_COMBO_BOX(p->monitor), "-1");
     gtk_switch_set_active(GTK_SWITCH(p->reserve_space), c->reserve_space);
+    gtk_switch_set_active(GTK_SWITCH(p->expand), c->expand);
     gtk_switch_set_active(GTK_SWITCH(p->autohide), c->autohide);
     gtk_widget_set_sensitive(p->reserve_space, !c->autohide);
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(p->spacing), c->spacing);
@@ -308,6 +309,8 @@ static GtkWidget *build_position_page(Preferences *p)
     }
     g_signal_connect(p->monitor, "changed", G_CALLBACK(on_monitor_changed), p);
     add_row(grid, "Monitor", NULL, p->monitor);
+    p->expand = make_switch(p, &p->cfg->expand);
+    add_row(grid, "Extend to screen edges", "Stretch the bar along the whole screen edge, like a panel", p->expand);
     p->autohide = make_switch(p, &p->cfg->autohide);
     g_signal_connect(p->autohide, "notify::active", G_CALLBACK(on_autohide_changed), p);
     add_row(grid, "Automatically hide and show the dock", "Slide away until the pointer touches the screen edge", p->autohide);

@@ -355,6 +355,13 @@ static void layout(Dock *d)
 
     d->bar_len = MAX(total, s) + 2 * padding(d);
     d->bar_pos = center - d->bar_len / 2;
+    if (d->cfg->expand) {
+        /* Span the whole edge. Overshoot both ends by the corner radius so the
+         * rounded corners fall outside the window and the ends look square. */
+        double r = corner_radius(d) + 1;
+        d->bar_pos = -r;
+        d->bar_len = dock_length(d) + 2 * r;
+    }
     if (d->size != d->strut_size) /* apps opened or closed changed the fitted size */
         update_strut(d);
 }
