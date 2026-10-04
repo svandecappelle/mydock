@@ -47,9 +47,8 @@ static void read_bool(GKeyFile *kf, const char *key, gboolean *out)
         *out = v;
 }
 
-DockConfig *dock_config_load(void)
+void dock_config_reset(DockConfig *cfg)
 {
-    DockConfig *cfg = g_new0(DockConfig, 1);
     cfg->icon_size = 48;
     cfg->max_scale = 1.8;
     cfg->magnify_range = 3.0;
@@ -57,10 +56,17 @@ DockConfig *dock_config_load(void)
     cfg->padding = 8;
     cfg->margin = 6;
     cfg->corner_radius = 16;
+    g_free(cfg->theme);
     cfg->theme = g_strdup("dark");
     cfg->monitor = -1;
     cfg->reserve_space = TRUE;
     cfg->show_labels = TRUE;
+}
+
+DockConfig *dock_config_load(void)
+{
+    DockConfig *cfg = g_new0(DockConfig, 1);
+    dock_config_reset(cfg);
     cfg->path = g_build_filename(g_get_user_config_dir(), "macdock", "config.ini", NULL);
 
     g_autoptr(GKeyFile) kf = g_key_file_new();

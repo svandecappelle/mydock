@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "apps.h"
+#include "preferences.h"
 
 #define LABEL_SPACE 44      /* room above the tallest icon for the name tooltip */
 #define BOUNCE_HEIGHT 0.5   /* bounce height, as a fraction of the icon size */
@@ -71,6 +72,8 @@ struct Dock {
     cairo_rectangle_int_t input_rect;
     GtkWidget *menu;
     DockItem *menu_item;
+    GtkApplication *app;
+    Preferences *prefs;
 };
 
 static inline void set_rgba(cairo_t *cr, const Rgba c)
@@ -119,8 +122,15 @@ static GdkMonitor *dock_monitor(void)
 static void update_strut(Dock *d)
 {
     GdkWindow *gdk_window = gtk_widget_get_window(d->window);
-    if (!gdk_window || !d->cfg->reserve_space)
+    if (!gdk_window)
         return;
+    Display *dpy = GDK_WINDOW_XDISPLAY(gdk_window);
+    Window xid = GDK_WINDOW_XID(gdk_window);
+    if (!d->cfg->reserve_space) {
+        XDeleteProperty(dpy, xid, XInternAtom(dpy, "_NET_WM_STRUT_PARTIAL", False));
+        XDeleteProperty(dpy, xid, XInternAtom(dpy, "_NET_WM_STRUT", False));
+        return;
+    }
     GdkDisplay *display = gdk_display_get_default();
     int screen_bottom = 0;
     for (int i = 0; i < gdk_display_get_n_monitors(display); i++) {
@@ -133,9 +143,6 @@ static void update_strut(Dock *d)
     long height = (screen_bottom - (g->y + g->height) + bar_height(d) + d->cfg->margin) * sf;
     long partial[12] = { 0, 0, 0, height, 0, 0, 0, 0, 0, 0, g->x * sf, (g->x + g->width) * sf - 1 };
     long simple[4] = { 0, 0, 0, height };
-
-    Display *dpy = GDK_WINDOW_XDISPLAY(gdk_window);
-    Window xid = GDK_WINDOW_XID(gdk_window);
     XChangeProperty(dpy, xid, XInternAtom(dpy, "_NET_WM_STRUT_PARTIAL", False), XA_CARDINAL, 32,
                     PropModeReplace, (unsigned char *)partial, 12);
     XChangeProperty(dpy, xid, XInternAtom(dpy, "_NET_WM_STRUT", False), XA_CARDINAL, 32,
@@ -508,6 +515,16 @@ static void on_menu_quit(GtkMenuItem *mi, Dock *d)
         app_tracker_close_all(d->tracker, d->menu_item, gtk_get_current_event_time());
 }
 
+static void on_menu_settings(GtkMenuItem *mi, Dock *d)
+{
+    dock_show_preferences(d, gtk_get_current_event_time());
+}
+
+static void on_menu_quit_dock(GtkMenuItem *mi, Dock *d)
+{
+    g_application_quit(G_APPLICATION(d->app));
+}
+
 static void on_menu_closed(GtkMenuShell *menu, Dock *d)
 {
     /* Shrink back unless the pointer is still over the dock. */
@@ -529,14 +546,26 @@ static void menu_append(GtkWidget *menu, const char *label, GCallback callback, 
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), mi);
 }
 
+/* Context menu of an icon, or of the bar itself when `sl` is NULL. */
 static void show_menu(Dock *d, const Slot *sl, GdkEvent *event)
 {
-    DockItem *item = sl->item;
     if (d->menu)
         gtk_widget_destroy(d->menu);
     d->menu = gtk_menu_new();
-    d->menu_item = item;
+    d->menu_item = sl ? sl->item : NULL;
+    g_signal_connect(d->menu, "deactivate", G_CALLBACK(on_menu_closed), d);
+    gtk_menu_attach_to_widget(GTK_MENU(d->menu), d->area, NULL);
 
+    if (!sl) {
+        menu_append(d->menu, "Dock Settings…", G_CALLBACK(on_menu_settings), d);
+        gtk_menu_shell_append(GTK_MENU_SHELL(d->menu), gtk_separator_menu_item_new());
+        menu_append(d->menu, "Quit Dock", G_CALLBACK(on_menu_quit_dock), d);
+        gtk_widget_show_all(d->menu);
+        gtk_menu_popup_at_pointer(GTK_MENU(d->menu), event);
+        return;
+    }
+
+    DockItem *item = sl->item;
     GList *windows = app_tracker_stacked_windows(d->tracker, item);
     for (GList *l = g_list_last(windows); l; l = l->prev) {
         const char *title = wnck_window_get_name(l->data);
@@ -561,9 +590,9 @@ static void show_menu(Dock *d, const Slot *sl, GdkEvent *event)
         menu_append(d->menu, "Quit", G_CALLBACK(on_menu_quit), d);
     }
     g_list_free(windows);
+    gtk_menu_shell_append(GTK_MENU_SHELL(d->menu), gtk_separator_menu_item_new());
+    menu_append(d->menu, "Dock Settings…", G_CALLBACK(on_menu_settings), d);
 
-    g_signal_connect(d->menu, "deactivate", G_CALLBACK(on_menu_closed), d);
-    gtk_menu_attach_to_widget(GTK_MENU(d->menu), d->area, NULL);
     gtk_widget_show_all(d->menu);
     double x, y, size;
     icon_rect(d, sl, &x, &y, &size);
@@ -605,11 +634,9 @@ static gboolean on_press(GtkWidget *widget, GdkEventButton *event, Dock *d)
     if (event->type != GDK_BUTTON_PRESS) /* ignore double/triple-click events */
         return FALSE;
     Slot *sl = slot_at(d, event->x);
-    if (!sl)
-        return FALSE;
     if (event->button == GDK_BUTTON_SECONDARY) {
         show_menu(d, sl, (GdkEvent *)event);
-    } else {
+    } else if (sl) {
         d->pressed = sl->item;
         gtk_widget_queue_draw(d->area);
     }
@@ -636,6 +663,8 @@ static gboolean on_release(GtkWidget *widget, GdkEventButton *event, Dock *d)
 static void on_items_changed(gpointer data)
 {
     Dock *d = data;
+    if (d->prefs)
+        preferences_sync(d->prefs);
     refresh(d);
     animate(d); /* runs launch bounces; stops by itself when idle */
 }
@@ -676,13 +705,49 @@ static void on_monitors_changed(GdkScreen *screen, Dock *d)
     refresh(d);
 }
 
+/* ---- settings ------------------------------------------------------------ */
+
+static const Theme *theme_for(const DockConfig *cfg)
+{
+    return g_strcmp0(cfg->theme, "light") == 0 ? &theme_light : &theme_dark;
+}
+
+/* The config changed (from the settings window): rebuild everything that
+ * depends on it, live. */
+static void apply_config(gpointer data)
+{
+    Dock *d = data;
+    d->colors = theme_for(d->cfg);
+    GPtrArray *items = app_tracker_items(d->tracker);
+    for (guint i = 0; i < items->len; i++)
+        dock_item_clear_icons(g_ptr_array_index(items, i)); /* icon size may have changed */
+    memset(&d->input_rect, 0, sizeof d->input_rect);         /* force a new input shape */
+    place(d);
+    refresh(d);
+}
+
+static void on_preferences_closed(gpointer data)
+{
+    ((Dock *)data)->prefs = NULL;
+}
+
+void dock_show_preferences(Dock *d, guint32 timestamp)
+{
+    if (!d->prefs) {
+        PreferencesCallbacks callbacks = { apply_config, on_preferences_closed, d };
+        d->prefs = preferences_new(d->app, d->cfg, d->tracker, &callbacks);
+    }
+    preferences_present(d->prefs, timestamp);
+}
+
 /* ---- construction -------------------------------------------------------- */
 
 Dock *dock_new(GtkApplication *app, DockConfig *cfg)
 {
     Dock *d = g_new0(Dock, 1);
     d->cfg = cfg;
-    d->colors = g_strcmp0(cfg->theme, "light") == 0 ? &theme_light : &theme_dark;
+    d->app = app;
+    d->colors = theme_for(cfg);
     d->slots = g_array_new(FALSE, TRUE, sizeof(Slot));
 
     GtkWindow *win = GTK_WINDOW(gtk_window_new(GTK_WINDOW_TOPLEVEL));

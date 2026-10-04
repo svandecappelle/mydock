@@ -41,3 +41,5 @@ void app_tracker_activate_window(AppTracker *t, WnckWindow *window, guint32 time
 void app_tracker_launch(AppTracker *t, DockItem *item, guint32 timestamp);
 void app_tracker_close_all(AppTracker *t, DockItem *item, guint32 timestamp);
 void app_tracker_set_pinned(AppTracker *t, DockItem *item, gboolean pinned);
+/* Pins exactly `ids` (NULL-terminated), in that order, and saves the config. */
+void app_tracker_set_pinned_ids(AppTracker *t, const char *const *ids);

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Dock Settings
+Comment=Configure the macdock application dock
+Exec=macdock --preferences
+Icon=preferences-desktop
+Categories=Settings;DesktopSettings;GTK;
+StartupWMClass=macdock

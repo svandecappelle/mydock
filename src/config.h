@@ -20,6 +20,8 @@ typedef struct {
 } DockConfig;
 
 DockConfig *dock_config_load(void);
+/* Restores every setting except `pinned` to its default (does not save). */
+void dock_config_reset(DockConfig *cfg);
 void dock_config_save(const DockConfig *cfg);
 /* Replaces the pinned list (takes ownership of `ids`) and saves. */
 void dock_config_set_pinned(DockConfig *cfg, char **ids);

@@ -22,6 +22,7 @@ add_executable(macdock
   src/config.c
   src/apps.c
   src/dock.c
+  src/preferences.c
 )
 target_link_libraries(macdock PRIVATE PkgConfig::DEPS m)
 target_compile_definitions(macdock PRIVATE
@@ -32,4 +33,4 @@ target_compile_options(macdock PRIVATE -Wall -Wextra -Wno-unused-parameter)
 
 include(GNUInstallDirs)
 install(TARGETS macdock RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-install(FILES data/macdock.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+install(FILES data/macdock.desktop data/macdock-settings.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)

@@ -40,7 +40,24 @@ the dock sits on top of it.
 
 ## Configuration
 
-The first run writes `~/.config/macdock/config.ini`. Edit it and restart the dock.
+Open the settings window in any of these ways:
+
+- right-click the dock > **Dock Settings…**
+- run `macdock --preferences` (opens the running dock's settings; starts the dock if needed)
+- choose **Dock Settings** in your application menu (after `cmake --install`)
+
+Changes apply to the dock immediately and are saved automatically.
+
+| tab | settings |
+|---|---|
+| Appearance | theme, icon size, corner radius, app-name labels, magnification (on/off, zoom, spread) |
+| Position | monitor, reserve screen space, icon spacing, bar padding, distance from screen edge |
+| Apps | pinned apps: add (searchable list), remove, reorder |
+
+**Reset to Defaults** restores every setting except the pinned apps.
+
+Settings are stored in `~/.config/macdock/config.ini`. You can also edit that
+file by hand, then restart the dock:
 
 | key | default | meaning |
 |---|---|---|
@@ -55,8 +72,6 @@ The first run writes `~/.config/macdock/config.ini`. Edit it and restart the doc
 | `show_labels` | true | name tooltip on hover |
 | `pinned` | auto | `;`-separated `.desktop` ids, in order |
 
-Use right-click > Keep in Dock to pin or unpin apps; this updates `pinned`.
-
 ## Design
 
 ```
@@ -65,6 +80,7 @@ src/main.c      GtkApplication entry point (single instance), SIGINT/SIGTERM han
 src/config.c    GKeyFile-based config
 src/apps.c      model: DockItem + AppTracker (pinned apps ⟷ libwnck windows)
 src/dock.c      view/controller: the DOCK window, Cairo drawing, animation, input, struts
+src/preferences.c  the "Dock Settings" window
 ```
 
 **Window.** One undecorated GTK3 window with an RGBA visual and
@@ -97,6 +113,14 @@ window with no match becomes its own item, using the window's icon.
 **Memory ownership.** `AppTracker` owns the `DockItem`s. Before freeing an
 item it calls `item_removed`, so the dock can drop any pointer it holds
 (hovered, pressed, or the item whose menu is open).
+
+**Settings window.** `preferences.c` edits the shared `DockConfig` in place.
+After each change it calls back into the dock (`apply_config`), which reloads
+the theme and icons, then resizes and moves the window. Saving waits 400 ms, so
+dragging a slider does not rewrite the file on every step. Changes to the
+pinned list go through `app_tracker_set_pinned_ids`, the same path the "Keep
+in Dock" menu uses. A second `macdock --preferences` process forwards an
+`app.preferences` action to the running instance over D-Bus (GApplication).
 
 **Click behaviour** (`app_tracker_activate`). If the app is not running, launch
 it. If it is running but not focused, raise its topmost window, or restore all

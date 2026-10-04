@@ -398,31 +398,62 @@ void app_tracker_close_all(AppTracker *t, DockItem *item, guint32 timestamp)
     g_list_free(windows);
 }
 
+void app_tracker_set_pinned_ids(AppTracker *t, const char *const *ids)
+{
+    GPtrArray *items = g_ptr_array_new();
+    GPtrArray *pinned = g_ptr_array_new();
+
+    /* Pinned items first, in the requested order. */
+    for (const char *const *id = ids; *id; id++) {
+        DockItem *item = find_item(t, *id);
+        if (item) {
+            if (!item->app_info || g_ptr_array_find(items, item, NULL))
+                continue;
+            g_ptr_array_remove(t->items, item);
+        } else {
+            g_autoptr(GDesktopAppInfo) info = g_desktop_app_info_new(*id);
+            if (!info)
+                continue;
+            item = dock_item_new(*id, info, TRUE);
+        }
+        item->pinned = TRUE;
+        g_ptr_array_add(items, item);
+        g_ptr_array_add(pinned, g_strdup(*id));
+    }
+
+    /* Then the remaining items that still have windows, in their current
+     * order; a newly unpinned app thus lands at the start of that group. */
+    for (guint i = 0; i < t->items->len; i++) {
+        DockItem *item = g_ptr_array_index(t->items, i);
+        item->pinned = FALSE;
+        if (item->windows) {
+            g_ptr_array_add(items, item);
+        } else {
+            t->cb.item_removed(item, t->cb.data);
+            dock_item_free(item);
+        }
+    }
+    g_ptr_array_free(t->items, TRUE);
+    t->items = items;
+
+    g_ptr_array_add(pinned, NULL);
+    dock_config_set_pinned(t->cfg, (char **)g_ptr_array_free(pinned, FALSE));
+    notify(t);
+}
+
 void app_tracker_set_pinned(AppTracker *t, DockItem *item, gboolean pinned)
 {
     if (item->pinned == pinned || !item->app_info)
         return;
-    g_ptr_array_remove(t->items, item);
-    item->pinned = pinned;
-
-    guint n_pinned = 0;
-    while (n_pinned < t->items->len && ((DockItem *)g_ptr_array_index(t->items, n_pinned))->pinned)
-        n_pinned++;
-    if (pinned || item->windows) {
-        /* pinned: end of the pinned group; unpinned: start of the running group */
-        g_ptr_array_insert(t->items, n_pinned, item);
-    } else {
-        t->cb.item_removed(item, t->cb.data);
-        dock_item_free(item);
-    }
-
     GPtrArray *ids = g_ptr_array_new();
     for (guint i = 0; i < t->items->len; i++) {
         DockItem *it = g_ptr_array_index(t->items, i);
-        if (it->pinned)
-            g_ptr_array_add(ids, g_strdup(it->key));
+        if (it->pinned && it != item)
+            g_ptr_array_add(ids, it->key);
     }
+    if (pinned)
+        g_ptr_array_add(ids, item->key);
     g_ptr_array_add(ids, NULL);
-    dock_config_set_pinned(t->cfg, (char **)g_ptr_array_free(ids, FALSE));
-    notify(t);
+    app_tracker_set_pinned_ids(t, (const char *const *)ids->pdata);
+    g_ptr_array_free(ids, TRUE);
 }
