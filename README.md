@@ -12,6 +12,7 @@ libwnck (tested on LXQt + Openbox + compton).
 - Right-click menu: window list, New Window, Keep in Dock, Quit
 - Reserves screen space so maximized windows stay clear of the dock
 - Attach to any screen edge: bottom, top, left or right
+- Optional auto-hide: the dock slides away and comes back when the pointer touches the screen edge
 - One "Dock size" setting scales the whole dock; it shrinks automatically when the icons would not fit the screen edge
 
 ## Build
@@ -53,7 +54,7 @@ Changes apply to the dock immediately and are saved automatically.
 | tab | settings |
 |---|---|
 | Appearance | theme, dock size, corner radius, app-name labels, magnification (on/off, zoom, spread) |
-| Position | screen edge (bottom/top/left/right), monitor, reserve screen space, icon spacing, bar padding, distance from screen edge |
+| Position | screen edge (bottom/top/left/right), monitor, auto-hide, reserve screen space, icon spacing, bar padding, distance from screen edge |
 | Apps | pinned apps: add (searchable list), remove, reorder |
 
 **Reset to Defaults** restores every setting except the pinned apps.
@@ -72,7 +73,8 @@ file by hand, then restart the dock:
 | `corner_radius` | 16 | bar corner radius (at size 48; scaled with `icon_size`) |
 | `theme` | `dark` | `dark` or `light` |
 | `monitor` | -1 | monitor index, -1 = primary |
-| `reserve_space` | true | stop maximized windows from covering the dock |
+| `reserve_space` | true | stop maximized windows from covering the dock (ignored while auto-hiding) |
+| `autohide` | false | hide the dock until the pointer touches the screen edge |
 | `show_labels` | true | name tooltip on hover |
 | `pinned` | auto | `;`-separated `.desktop` ids, in order |
 
@@ -102,6 +104,15 @@ for the chosen edge. Icons and text are never rotated, only placed. Name
 labels and right-click menus open on the side away from the edge. The
 reserved strip (`_NET_WM_STRUT_PARTIAL`) is set on that edge. On a vertical
 dock the window is wider, to make room for labels beside the icons.
+
+**Auto-hide.** `hide` animates between 0 (shown) and 1 (hidden), eased like
+the zoom. `to_window()` moves everything toward the screen edge by
+`hide × (bar + margin + shadow)`, so the dock slides out of its own window.
+The input shape follows it, but never gets thinner than a 2px strip along the
+edge (`TRIGGER_SIZE`). Touching that strip reveals the dock. Leaving the dock
+starts a 500 ms timer that hides it again. The timer is cancelled if the
+pointer comes back, and is not started while a menu is open. An auto-hidden
+dock reserves no screen space.
 
 **Dock size.** Spacing, padding and corner radius are stored for the 48px
 reference size and scaled with `icon_size`, so the dock keeps its proportions.

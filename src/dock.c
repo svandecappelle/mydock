@@ -16,6 +16,9 @@
 #define ZOOM_SPEED 14.0     /* higher = snappier zoom-in/out */
 #define SCREEN_END_GAP 8    /* minimum room left at both ends of a full dock */
 #define MIN_ICON_SIZE 16
+#define HIDE_DELAY_MS 500   /* auto-hide: wait this long after the pointer leaves */
+#define HIDE_SPEED 10.0     /* auto-hide slide speed, like ZOOM_SPEED */
+#define TRIGGER_SIZE 2      /* auto-hide: depth of the strip at the screen edge that reveals the dock */
 
 typedef double Rgba[4];
 
@@ -72,6 +75,10 @@ struct Dock {
     gboolean has_mouse_pos;
     double zoom;          /* 0 = at rest, 1 = fully magnified */
     double zoom_target;
+    double hide;          /* auto-hide: 0 = shown, 1 = slid out of view */
+    double hide_target;
+    guint hide_timeout_id;
+    gboolean pointer_inside;
     DockItem *hovered, *pressed;
     GArray *slots;        /* Slot */
     double bar_pos, bar_len;
@@ -144,7 +151,7 @@ static double dock_length(Dock *d)
     return is_vertical(d) ? d->monitor_geo.height : d->monitor_geo.width;
 }
 
-static Rect to_window(Dock *d, double a, double e, double len, double depth)
+static Rect to_window_raw(Dock *d, double a, double e, double len, double depth)
 {
     double t = window_depth(d);
     switch (d->cfg->position) {
@@ -155,7 +162,22 @@ static Rect to_window(Dock *d, double a, double e, double len, double depth)
     }
 }
 
+/* How far the dock slides toward the screen edge when auto-hidden: past the
+ * edge by the bar, its margin, and some room for the shadow. */
+static double hide_distance(Dock *d)
+{
+    return d->cfg->margin + bar_thickness(d) + 12;
+}
+
+/* Like to_window_raw(), with the auto-hide slide applied: everything drawn
+ * moves toward the screen edge, out of the window. */
+static Rect to_window(Dock *d, double a, double e, double len, double depth)
+{
+    return to_window_raw(d, a, e - d->hide * hide_distance(d), len, depth);
+}
+
 static void fit_size(Dock *d, GPtrArray *items);
+static double bar_thickness(Dock *d);
 
 static GdkMonitor *dock_monitor(void)
 {
@@ -174,7 +196,7 @@ static void update_strut(Dock *d)
     Display *dpy = GDK_WINDOW_XDISPLAY(gdk_window);
     Window xid = GDK_WINDOW_XID(gdk_window);
     d->strut_size = d->size;
-    if (!d->cfg->reserve_space) {
+    if (!d->cfg->reserve_space || d->cfg->autohide) {
         XDeleteProperty(dpy, xid, XInternAtom(dpy, "_NET_WM_STRUT_PARTIAL", False));
         XDeleteProperty(dpy, xid, XInternAtom(dpy, "_NET_WM_STRUT", False));
         return;
@@ -396,7 +418,9 @@ static void update_input_shape(Dock *d)
                 depth = MAX(depth, icon_far_edge(d, sl));
         }
     }
-    Rect r = to_window(d, d->bar_pos, 0, d->bar_len, depth);
+    /* While auto-hidden, only a thin strip at the screen edge is left. */
+    depth = MAX(TRIGGER_SIZE, depth - d->hide * hide_distance(d));
+    Rect r = to_window_raw(d, d->bar_pos, 0, d->bar_len, depth);
     int x = (int)floor(r.x), y = (int)floor(r.y);
     cairo_rectangle_int_t rect = { x, y, (int)ceil(r.x + r.w) - x, (int)ceil(r.y + r.h) - y };
     if (memcmp(&rect, &d->input_rect, sizeof rect) == 0)
@@ -434,8 +458,11 @@ static gboolean on_tick(GtkWidget *widget, GdkFrameClock *clock, gpointer data)
     d->zoom += (d->zoom_target - d->zoom) * (1 - exp(-dt * ZOOM_SPEED));
     if (fabs(d->zoom - d->zoom_target) < 0.002)
         d->zoom = d->zoom_target;
+    d->hide += (d->hide_target - d->hide) * (1 - exp(-dt * HIDE_SPEED));
+    if (fabs(d->hide - d->hide_target) < 0.002)
+        d->hide = d->hide_target;
     refresh(d);
-    if (d->zoom == d->zoom_target && !any_bouncing(d)) {
+    if (d->zoom == d->zoom_target && d->hide == d->hide_target && !any_bouncing(d)) {
         d->tick_id = 0;
         return G_SOURCE_REMOVE;
     }
@@ -448,6 +475,41 @@ static void animate(Dock *d)
         d->last_frame = 0;
         d->tick_id = gtk_widget_add_tick_callback(d->area, on_tick, d, NULL);
     }
+}
+
+/* ---- auto-hide ----------------------------------------------------------- */
+
+static void cancel_hide(Dock *d)
+{
+    if (d->hide_timeout_id) {
+        g_source_remove(d->hide_timeout_id);
+        d->hide_timeout_id = 0;
+    }
+}
+
+static void show_dock(Dock *d)
+{
+    cancel_hide(d);
+    d->hide_target = 0;
+    animate(d);
+}
+
+static gboolean on_hide_timeout(gpointer data)
+{
+    Dock *d = data;
+    d->hide_timeout_id = 0;
+    d->hide_target = 1;
+    animate(d);
+    return G_SOURCE_REMOVE;
+}
+
+/* Hide after a short delay, unless the pointer comes back meanwhile. */
+static void schedule_hide(Dock *d)
+{
+    if (!d->cfg->autohide)
+        return;
+    cancel_hide(d);
+    d->hide_timeout_id = g_timeout_add(HIDE_DELAY_MS, on_hide_timeout, d);
 }
 
 /* ---- drawing ------------------------------------------------------------- */
@@ -673,6 +735,8 @@ static void on_menu_closed(GtkMenuShell *menu, Dock *d)
     if (!(px >= r->x && px < r->x + r->width && py >= r->y && py < r->y + r->height)) {
         d->zoom_target = 0;
         d->hovered = NULL;
+        d->pointer_inside = FALSE;
+        schedule_hide(d);
     }
     animate(d);
 }
@@ -755,6 +819,8 @@ static gboolean on_motion(GtkWidget *widget, GdkEvent *event, Dock *d)
     d->mouse_pos = along(d, x, y);
     d->has_mouse_pos = TRUE;
     d->zoom_target = 1;
+    d->pointer_inside = TRUE;
+    show_dock(d);
     Slot *sl = slot_at(d, d->mouse_pos);
     d->hovered = sl ? sl->item : NULL;
     refresh(d);
@@ -769,6 +835,8 @@ static gboolean on_leave(GtkWidget *widget, GdkEventCrossing *event, Dock *d)
     d->zoom_target = 0;
     d->hovered = NULL;
     d->pressed = NULL;
+    d->pointer_inside = FALSE;
+    schedule_hide(d);
     animate(d);
     return FALSE;
 }
@@ -863,6 +931,10 @@ static void apply_config(gpointer data)
     Dock *d = data;
     d->colors = theme_for(d->cfg);
     d->has_mouse_pos = FALSE; /* the dock may have moved to another edge */
+    if (!d->cfg->autohide)
+        show_dock(d);
+    else if (!d->pointer_inside && d->hide_target == 0 && !d->hide_timeout_id)
+        schedule_hide(d);
     GPtrArray *items = app_tracker_items(d->tracker);
     for (guint i = 0; i < items->len; i++)
         dock_item_clear_icons(g_ptr_array_index(items, i)); /* icon size may have changed */
@@ -894,6 +966,7 @@ Dock *dock_new(GtkApplication *app, DockConfig *cfg)
     d->app = app;
     d->colors = theme_for(cfg);
     d->slots = g_array_new(FALSE, TRUE, sizeof(Slot));
+    d->hide = d->hide_target = cfg->autohide ? 1 : 0;
 
     GtkWindow *win = GTK_WINDOW(gtk_window_new(GTK_WINDOW_TOPLEVEL));
     d->window = GTK_WIDGET(win);

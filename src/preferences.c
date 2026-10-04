@@ -14,7 +14,7 @@ struct Preferences {
 
     GtkWidget *theme, *icon_size, *corner_radius, *show_labels;
     GtkWidget *magnify, *zoom, *spread;
-    GtkWidget *position, *monitor, *reserve_space, *spacing, *padding, *margin;
+    GtkWidget *position, *monitor, *autohide, *reserve_space, *spacing, *padding, *margin;
     GtkWidget *apps_list, *remove_button, *up_button, *down_button;
 
     double zoom_value;   /* zoom shown in the slider, kept while magnification is off */
@@ -87,6 +87,12 @@ static void on_magnify_changed(GtkSwitch *sw, GParamSpec *pspec, Preferences *p)
     changed(p);
 }
 
+static void on_autohide_changed(GtkSwitch *sw, GParamSpec *pspec, Preferences *p)
+{
+    /* an auto-hidden dock never reserves space */
+    gtk_widget_set_sensitive(p->reserve_space, !gtk_switch_get_active(sw));
+}
+
 static void on_theme_changed(GtkComboBox *combo, Preferences *p)
 {
     const char *id = gtk_combo_box_get_active_id(combo);
@@ -140,6 +146,8 @@ static void load_values(Preferences *p)
     if (!gtk_combo_box_set_active_id(GTK_COMBO_BOX(p->monitor), monitor_id))
         gtk_combo_box_set_active_id(GTK_COMBO_BOX(p->monitor), "-1");
     gtk_switch_set_active(GTK_SWITCH(p->reserve_space), c->reserve_space);
+    gtk_switch_set_active(GTK_SWITCH(p->autohide), c->autohide);
+    gtk_widget_set_sensitive(p->reserve_space, !c->autohide);
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(p->spacing), c->spacing);
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(p->padding), c->padding);
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(p->margin), c->margin);
@@ -300,8 +308,11 @@ static GtkWidget *build_position_page(Preferences *p)
     }
     g_signal_connect(p->monitor, "changed", G_CALLBACK(on_monitor_changed), p);
     add_row(grid, "Monitor", NULL, p->monitor);
+    p->autohide = make_switch(p, &p->cfg->autohide);
+    g_signal_connect(p->autohide, "notify::active", G_CALLBACK(on_autohide_changed), p);
+    add_row(grid, "Automatically hide and show the dock", "Slide away until the pointer touches the screen edge", p->autohide);
     p->reserve_space = make_switch(p, &p->cfg->reserve_space);
-    add_row(grid, "Reserve space", "Keep maximized windows from covering the dock", p->reserve_space);
+    add_row(grid, "Reserve space", "Keep maximized windows from covering the dock (not while auto-hiding)", p->reserve_space);
 
     grid = add_section(page, "Spacing");
     p->spacing = make_spin(p, 0, 32, &p->cfg->spacing);

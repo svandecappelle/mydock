@@ -76,6 +76,7 @@ void dock_config_reset(DockConfig *cfg)
     cfg->theme = g_strdup("dark");
     cfg->monitor = -1;
     cfg->reserve_space = TRUE;
+    cfg->autohide = FALSE;
     cfg->show_labels = TRUE;
 }
 
@@ -100,6 +101,7 @@ DockConfig *dock_config_load(void)
     read_int(kf, "corner_radius", &cfg->corner_radius);
     read_int(kf, "monitor", &cfg->monitor);
     read_bool(kf, "reserve_space", &cfg->reserve_space);
+    read_bool(kf, "autohide", &cfg->autohide);
     read_bool(kf, "show_labels", &cfg->show_labels);
     g_autofree char *position = g_key_file_get_string(kf, GROUP, "position", NULL);
     if (position)
@@ -144,6 +146,7 @@ void dock_config_save(const DockConfig *cfg)
     g_key_file_set_string(kf, GROUP, "theme", cfg->theme);
     g_key_file_set_integer(kf, GROUP, "monitor", cfg->monitor);
     g_key_file_set_boolean(kf, GROUP, "reserve_space", cfg->reserve_space);
+    g_key_file_set_boolean(kf, GROUP, "autohide", cfg->autohide);
     g_key_file_set_boolean(kf, GROUP, "show_labels", cfg->show_labels);
     g_key_file_set_string_list(kf, GROUP, "pinned", (const char *const *)cfg->pinned,
                                g_strv_length(cfg->pinned));

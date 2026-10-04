@@ -26,6 +26,7 @@ typedef struct {
     char *theme;            /* "dark" or "light" */
     int monitor;            /* -1 = primary monitor */
     gboolean reserve_space; /* keep maximized windows above the dock */
+    gboolean autohide;      /* slide out of view until the pointer touches the screen edge */
     gboolean show_labels;
     char **pinned;          /* NULL-terminated list of desktop ids */
     char *path;
