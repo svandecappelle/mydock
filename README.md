@@ -10,7 +10,9 @@ libwnck (tested on LXQt + Openbox + compton).
 - Dot under running apps; separator between pinned and other running apps
 - Click to launch, raise, cycle windows, or minimize; middle-click for a new instance
 - Right-click menu: window list, New Window, Keep in Dock, Quit
-- Reserves screen space so maximized windows stay above the dock
+- Reserves screen space so maximized windows stay clear of the dock
+- Attach to any screen edge: bottom, top, left or right
+- One "Dock size" setting scales the whole dock; it shrinks automatically when the icons would not fit the screen edge
 
 ## Build
 
@@ -50,8 +52,8 @@ Changes apply to the dock immediately and are saved automatically.
 
 | tab | settings |
 |---|---|
-| Appearance | theme, icon size, corner radius, app-name labels, magnification (on/off, zoom, spread) |
-| Position | monitor, reserve screen space, icon spacing, bar padding, distance from screen edge |
+| Appearance | theme, dock size, corner radius, app-name labels, magnification (on/off, zoom, spread) |
+| Position | screen edge (bottom/top/left/right), monitor, reserve screen space, icon spacing, bar padding, distance from screen edge |
 | Apps | pinned apps: add (searchable list), remove, reorder |
 
 **Reset to Defaults** restores every setting except the pinned apps.
@@ -61,11 +63,13 @@ file by hand, then restart the dock:
 
 | key | default | meaning |
 |---|---|---|
-| `icon_size` | 48 | icon size at rest (px) |
+| `position` | `bottom` | screen edge: `bottom`, `top`, `left` or `right` |
+| `icon_size` | 48 | dock size: icon size at rest (px) |
 | `max_scale` | 1.8 | zoom factor of the icon under the pointer (1 = off) |
 | `magnify_range` | 3 | number of neighbouring icons affected by the zoom |
-| `spacing`, `padding`, `margin` | 6, 8, 6 | gap between icons, bar padding, gap to screen edge |
-| `corner_radius` | 16 | bar corner radius |
+| `spacing`, `padding` | 6, 8 | gap between icons, bar padding (at size 48; scaled with `icon_size`) |
+| `margin` | 6 | gap between the bar and the screen edge (px, not scaled) |
+| `corner_radius` | 16 | bar corner radius (at size 48; scaled with `icon_size`) |
 | `theme` | `dark` | `dark` or `light` |
 | `monitor` | -1 | monitor index, -1 = primary |
 | `reserve_space` | true | stop maximized windows from covering the dock |
@@ -90,6 +94,20 @@ bouncing icon plus its tooltip. Most of it is transparent. An X input shape
 makes only the visible bar (and the zoomed icons) take clicks. The pointer
 passes through the rest to the windows underneath. Screen space is reserved by
 setting `_NET_WM_STRUT_PARTIAL` with Xlib, since GTK3 has no API for it.
+
+**Screen edges.** Layout is computed in *dock coordinates*. One axis runs
+along the dock. The other measures the distance from the screen edge the dock
+is attached to. A single function, `to_window()`, maps these to window pixels
+for the chosen edge. Icons and text are never rotated, only placed. Name
+labels and right-click menus open on the side away from the edge. The
+reserved strip (`_NET_WM_STRUT_PARTIAL`) is set on that edge. On a vertical
+dock the window is wider, to make room for labels beside the icons.
+
+**Dock size.** Spacing, padding and corner radius are stored for the 48px
+reference size and scaled with `icon_size`, so the dock keeps its proportions.
+When the icons would not fit the screen edge, `fit_size()` uses the largest
+size that does. The bar's length is linear in the icon size, so that size is
+a single division.
 
 **Rendering.** A single `GtkDrawingArea` paints everything with Cairo: the
 gradient bar, the highlight, the shadow, icons, dots, the separator and the

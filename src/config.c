@@ -17,6 +17,21 @@ static const char *const default_pinned[] = {
     NULL,
 };
 
+static const char *const position_names[] = { "bottom", "top", "left", "right" };
+
+const char *dock_position_to_string(DockPosition position)
+{
+    return position_names[CLAMP((int)position, 0, (int)G_N_ELEMENTS(position_names) - 1)];
+}
+
+DockPosition dock_position_from_string(const char *name)
+{
+    for (guint i = 0; i < G_N_ELEMENTS(position_names); i++)
+        if (g_strcmp0(name, position_names[i]) == 0)
+            return (DockPosition)i;
+    return DOCK_BOTTOM;
+}
+
 static gboolean app_installed(const char *id)
 {
     g_autoptr(GDesktopAppInfo) info = g_desktop_app_info_new(id);
@@ -49,6 +64,7 @@ static void read_bool(GKeyFile *kf, const char *key, gboolean *out)
 
 void dock_config_reset(DockConfig *cfg)
 {
+    cfg->position = DOCK_BOTTOM;
     cfg->icon_size = 48;
     cfg->max_scale = 1.8;
     cfg->magnify_range = 3.0;
@@ -85,6 +101,9 @@ DockConfig *dock_config_load(void)
     read_int(kf, "monitor", &cfg->monitor);
     read_bool(kf, "reserve_space", &cfg->reserve_space);
     read_bool(kf, "show_labels", &cfg->show_labels);
+    g_autofree char *position = g_key_file_get_string(kf, GROUP, "position", NULL);
+    if (position)
+        cfg->position = dock_position_from_string(position);
     char *theme = g_key_file_get_string(kf, GROUP, "theme", NULL);
     if (theme) {
         g_free(cfg->theme);
@@ -114,6 +133,7 @@ void dock_config_save(const DockConfig *cfg)
 {
     g_autoptr(GKeyFile) kf = g_key_file_new();
     g_key_file_set_comment(kf, NULL, NULL, " macdock configuration - restart the dock after editing", NULL);
+    g_key_file_set_string(kf, GROUP, "position", dock_position_to_string(cfg->position));
     g_key_file_set_integer(kf, GROUP, "icon_size", cfg->icon_size);
     g_key_file_set_double(kf, GROUP, "max_scale", cfg->max_scale);
     g_key_file_set_double(kf, GROUP, "magnify_range", cfg->magnify_range);

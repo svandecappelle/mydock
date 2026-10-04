@@ -14,7 +14,7 @@ struct Preferences {
 
     GtkWidget *theme, *icon_size, *corner_radius, *show_labels;
     GtkWidget *magnify, *zoom, *spread;
-    GtkWidget *monitor, *reserve_space, *spacing, *padding, *margin;
+    GtkWidget *position, *monitor, *reserve_space, *spacing, *padding, *margin;
     GtkWidget *apps_list, *remove_button, *up_button, *down_button;
 
     double zoom_value;   /* zoom shown in the slider, kept while magnification is off */
@@ -97,6 +97,15 @@ static void on_theme_changed(GtkComboBox *combo, Preferences *p)
     changed(p);
 }
 
+static void on_position_changed(GtkComboBox *combo, Preferences *p)
+{
+    const char *id = gtk_combo_box_get_active_id(combo);
+    if (!id)
+        return;
+    p->cfg->position = dock_position_from_string(id);
+    changed(p);
+}
+
 static void on_monitor_changed(GtkComboBox *combo, Preferences *p)
 {
     const char *id = gtk_combo_box_get_active_id(combo);
@@ -126,6 +135,7 @@ static void load_values(Preferences *p)
     gtk_widget_set_sensitive(p->zoom, magnify);
     gtk_widget_set_sensitive(p->spread, magnify);
 
+    gtk_combo_box_set_active_id(GTK_COMBO_BOX(p->position), dock_position_to_string(c->position));
     g_autofree char *monitor_id = g_strdup_printf("%d", c->monitor);
     if (!gtk_combo_box_set_active_id(GTK_COMBO_BOX(p->monitor), monitor_id))
         gtk_combo_box_set_active_id(GTK_COMBO_BOX(p->monitor), "-1");
@@ -247,9 +257,9 @@ static GtkWidget *build_appearance_page(Preferences *p)
     g_signal_connect(p->theme, "changed", G_CALLBACK(on_theme_changed), p);
     add_row(grid, "Theme", NULL, p->theme);
     p->icon_size = make_scale(24, 128, 2, 0, G_CALLBACK(on_icon_size_changed), p);
-    add_row(grid, "Icon size", "Size of the icons at rest, in pixels", p->icon_size);
+    add_row(grid, "Dock size", "Icon size in pixels; padding, spacing and corners scale with it", p->icon_size);
     p->corner_radius = make_spin(p, 0, 40, &p->cfg->corner_radius);
-    add_row(grid, "Corner radius", NULL, p->corner_radius);
+    add_row(grid, "Corner radius", "Scales with the dock size", p->corner_radius);
     p->show_labels = make_switch(p, &p->cfg->show_labels);
     add_row(grid, "Show app names", "Display the name above the hovered icon", p->show_labels);
 
@@ -269,6 +279,13 @@ static GtkWidget *build_position_page(Preferences *p)
     GtkWidget *page = new_page();
 
     GtkWidget *grid = add_section(page, "Placement");
+    p->position = gtk_combo_box_text_new();
+    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(p->position), "bottom", "Bottom");
+    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(p->position), "top", "Top");
+    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(p->position), "left", "Left");
+    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(p->position), "right", "Right");
+    g_signal_connect(p->position, "changed", G_CALLBACK(on_position_changed), p);
+    add_row(grid, "Position on screen", NULL, p->position);
     p->monitor = gtk_combo_box_text_new();
     gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(p->monitor), "-1", "Primary monitor");
     GdkDisplay *display = gdk_display_get_default();
@@ -288,9 +305,9 @@ static GtkWidget *build_position_page(Preferences *p)
 
     grid = add_section(page, "Spacing");
     p->spacing = make_spin(p, 0, 32, &p->cfg->spacing);
-    add_row(grid, "Icon spacing", "Gap between icons, in pixels", p->spacing);
+    add_row(grid, "Icon spacing", "Gap between icons; scales with the dock size", p->spacing);
     p->padding = make_spin(p, 0, 32, &p->cfg->padding);
-    add_row(grid, "Bar padding", "Space between the icons and the edge of the bar", p->padding);
+    add_row(grid, "Bar padding", "Space around the icons inside the bar; scales with the dock size", p->padding);
     p->margin = make_spin(p, 0, 64, &p->cfg->margin);
     add_row(grid, "Distance from screen edge", NULL, p->margin);
     return scrolled(page);
