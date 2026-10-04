@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=macdock
+Comment=macOS-style application dock
+Exec=macdock
+Icon=user-desktop
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
