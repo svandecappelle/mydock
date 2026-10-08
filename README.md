@@ -22,8 +22,8 @@ libwnck (tested on LXQt + Openbox + compton).
 
 Dependencies:
 
-- Arch: `sudo pacman -S base-devel cmake gtk3 libwnck3`
-- Debian/Ubuntu: `sudo apt install build-essential cmake pkg-config libgtk-3-dev libwnck-3-dev`
+- Arch: `sudo pacman -S base-devel cmake gtk3 libwnck3 libxext`
+- Debian/Ubuntu: `sudo apt install build-essential cmake pkg-config libgtk-3-dev libwnck-3-dev libxext-dev`
 
 ```sh
 cmake -S . -B build
@@ -38,8 +38,10 @@ sudo cmake --install build
 cp data/macdock.desktop ~/.config/autostart/   # start at login
 ```
 
-You need a compositor (picom, compton, or the one built into KWin/xfwm4) for
-transparency.
+A compositor (picom, compton, or the one built into KWin/xfwm4) gives the
+translucent glass look. Without one, the dock still works: it is drawn opaque
+and cut to its exact shape, so windows below stay fully visible. When a
+compositor starts or stops, the dock switches between the two modes by itself.
 
 For the macOS layout, move the LXQt panel to the top of the screen. Otherwise
 the dock sits on top of it.
@@ -89,7 +91,7 @@ file by hand, then restart the dock:
 ## Design
 
 ```
-CMakeLists.txt  build (pkg-config: gtk+-3.0, gio-unix-2.0, libwnck-3.0, x11)
+CMakeLists.txt  build (pkg-config: gtk+-3.0, gio-unix-2.0, libwnck-3.0, x11, xext)
 src/main.c      GtkApplication entry point (single instance), SIGINT/SIGTERM handling
 src/config.c    GKeyFile-based config
 src/apps.c      model: DockItem + AppTracker (pinned apps ⟷ libwnck windows)
@@ -150,6 +152,15 @@ reference size and scaled with `icon_size`, so the dock keeps its proportions.
 When the icons would not fit the screen edge, `fit_size()` uses the largest
 size that does. The bar's length is linear in the icon size, so that size is
 a single division.
+
+**Without a compositor.** X can't show transparent pixels without a
+compositor, so the dock's large window would cover other windows with black.
+Instead, each frame is rendered off-screen, and the region of its opaque
+pixels becomes the window's bounding shape (`XShapeCombineRectangles`, set
+directly because GDK can reset a toplevel's shape). Then the frame is copied
+to the window. The bar is drawn opaque, without a shadow. While auto-hidden,
+the 2px trigger strip is painted so the window stays reachable. On
+`composited-changed` the X window is recreated with the matching visual.
 
 **Rendering.** A single `GtkDrawingArea` paints everything with Cairo: the
 gradient bar, the highlight, the shadow, icons, dots, the separator and the

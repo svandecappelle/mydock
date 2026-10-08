@@ -1,6 +1,7 @@
 #include "dock.h"
 
 #include <X11/Xatom.h>
+#include <X11/extensions/shape.h>
 #include <gdk/gdkx.h>
 #include <math.h>
 #include <string.h>
@@ -74,6 +75,8 @@ typedef struct {
 struct Dock {
     DockConfig *cfg;
     const Theme *colors;
+    gboolean composited;  /* a compositor runs: the window can be truly transparent */
+    cairo_region_t *shape; /* without a compositor: the window's current shape (what is drawn) */
     AppTracker *tracker;
     GtkWidget *window, *area;
     GdkRectangle monitor_geo;
@@ -597,8 +600,9 @@ static void draw_bar(Dock *d, cairo_t *cr)
     Rect b = bar_rect(d);
     double r = corner_radius(d);
 
-    /* Soft drop shadow: a few stacked, growing translucent shapes. */
-    for (int i = 1; i <= 6; i++) {
+    /* Soft drop shadow: a few stacked, growing translucent shapes. Without a
+     * compositor nothing can be translucent, so no shadow and an opaque bar. */
+    for (int i = 1; d->composited && i <= 6; i++) {
         rounded_rect(cr, b.x - i, b.y - i + 3, b.w + 2 * i, b.h + 2 * i, r + i);
         set_rgba(cr, c->shadow);
         cairo_fill(cr);
@@ -606,8 +610,10 @@ static void draw_bar(Dock *d, cairo_t *cr)
 
     rounded_rect(cr, b.x, b.y, b.w, b.h, r);
     cairo_pattern_t *gradient = cairo_pattern_create_linear(0, b.y, 0, b.y + b.h);
-    cairo_pattern_add_color_stop_rgba(gradient, 0, c->bar_top[0], c->bar_top[1], c->bar_top[2], c->bar_top[3]);
-    cairo_pattern_add_color_stop_rgba(gradient, 1, c->bar_bottom[0], c->bar_bottom[1], c->bar_bottom[2], c->bar_bottom[3]);
+    cairo_pattern_add_color_stop_rgba(gradient, 0, c->bar_top[0], c->bar_top[1], c->bar_top[2],
+                                      d->composited ? c->bar_top[3] : 1);
+    cairo_pattern_add_color_stop_rgba(gradient, 1, c->bar_bottom[0], c->bar_bottom[1], c->bar_bottom[2],
+                                      d->composited ? c->bar_bottom[3] : 1);
     cairo_set_source(cr, gradient);
     cairo_fill_preserve(cr);
     cairo_pattern_destroy(gradient);
@@ -755,14 +761,16 @@ static void draw_label(Dock *d, cairo_t *cr, const Slot *sl)
     g_object_unref(pl);
 }
 
-static gboolean on_draw(GtkWidget *widget, cairo_t *cr, Dock *d)
+static void draw_scene(Dock *d, cairo_t *cr)
 {
-    cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
-    cairo_set_source_rgba(cr, 0, 0, 0, 0);
-    cairo_paint(cr);
-    cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
-
-    layout(d);
+    if (!d->composited && d->cfg->autohide && d->hide > 0.5) {
+        /* Without a compositor the window only exists where something is
+         * drawn, so draw the auto-hide trigger strip to keep it reachable. */
+        Rect r = to_window_raw(d, d->bar_pos, 0, d->bar_len, TRIGGER_SIZE);
+        cairo_rectangle(cr, r.x, r.y, r.w, r.h);
+        cairo_set_source_rgb(cr, d->colors->bar_bottom[0], d->colors->bar_bottom[1], d->colors->bar_bottom[2]);
+        cairo_fill(cr);
+    }
     draw_bar(d, cr);
     for (guint i = 0; i < d->slots->len; i++) {
         const Slot *sl = &g_array_index(d->slots, Slot, i);
@@ -778,6 +786,70 @@ static gboolean on_draw(GtkWidget *widget, cairo_t *cr, Dock *d)
         if (sl)
             draw_label(d, cr, sl);
     }
+}
+
+/* Set the X window's bounding shape directly: GDK keeps its own idea of a
+ * toplevel's shape and can reset what gtk_widget_shape_combine_region() set
+ * (seen right after startup), so leave GDK out of it. */
+static void set_window_shape(Dock *d, const cairo_region_t *region)
+{
+    GdkWindow *gdk_window = gtk_widget_get_window(d->window);
+    if (!gdk_window)
+        return;
+    int sf = gtk_widget_get_scale_factor(d->window);
+    int n = cairo_region_num_rectangles(region);
+    XRectangle *rects = g_new(XRectangle, MAX(n, 1));
+    for (int i = 0; i < n; i++) {
+        cairo_rectangle_int_t r;
+        cairo_region_get_rectangle(region, i, &r);
+        rects[i] = (XRectangle){ r.x * sf, r.y * sf, r.width * sf, r.height * sf };
+    }
+    XShapeCombineRectangles(GDK_WINDOW_XDISPLAY(gdk_window), GDK_WINDOW_XID(gdk_window), ShapeBounding,
+                            0, 0, rects, n, ShapeSet, Unsorted);
+    g_free(rects);
+}
+
+/* Without a compositor, transparent pixels would show as black and hide the
+ * windows below. Instead the window is cut to the shape of what is drawn (X
+ * Shape extension): render the frame off-screen, take the region of its
+ * opaque pixels as the window shape, then copy it to the window. */
+static void draw_shaped(Dock *d, GtkWidget *widget, cairo_t *cr)
+{
+    int sf = gtk_widget_get_scale_factor(widget);
+    int w = gtk_widget_get_allocated_width(widget), h = gtk_widget_get_allocated_height(widget);
+    cairo_surface_t *frame = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w * sf, h * sf);
+    cairo_surface_set_device_scale(frame, sf, sf);
+    cairo_t *fcr = cairo_create(frame);
+    draw_scene(d, fcr);
+    cairo_destroy(fcr);
+
+    cairo_region_t *shape = gdk_cairo_region_create_from_surface(frame);
+    if (d->shape && cairo_region_equal(shape, d->shape)) {
+        cairo_region_destroy(shape);
+    } else {
+        set_window_shape(d, shape);
+        g_clear_pointer(&d->shape, cairo_region_destroy);
+        d->shape = shape;
+    }
+
+    cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
+    cairo_set_source_surface(cr, frame, 0, 0);
+    cairo_paint(cr);
+    cairo_surface_destroy(frame);
+}
+
+static gboolean on_draw(GtkWidget *widget, cairo_t *cr, Dock *d)
+{
+    layout(d);
+    if (!d->composited) {
+        draw_shaped(d, widget, cr);
+        return TRUE;
+    }
+    cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
+    cairo_set_source_rgba(cr, 0, 0, 0, 0);
+    cairo_paint(cr);
+    cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
+    draw_scene(d, cr);
     return TRUE;
 }
 
@@ -1112,6 +1184,45 @@ static void on_monitors_changed(GdkScreen *screen, Dock *d)
     refresh(d);
 }
 
+/* Use a transparent (RGBA) window when a compositor runs, or an ordinary
+ * one cut to shape otherwise (see draw_shaped). The window must not be
+ * realized yet: X windows can't change their visual. */
+static void setup_visual(Dock *d)
+{
+    GdkScreen *screen = gtk_widget_get_screen(d->window);
+    GdkVisual *rgba = gdk_screen_get_rgba_visual(screen);
+    d->composited = rgba && gdk_screen_is_composited(screen);
+    gtk_widget_set_visual(d->window, d->composited ? rgba : gdk_screen_get_system_visual(screen));
+    if (!d->composited)
+        g_message("no compositor running: the dock is drawn without transparency");
+}
+
+/* A compositor started or stopped (at login the dock may well start first):
+ * recreate the X window with the right visual. */
+static void on_composited_changed(GdkScreen *screen, Dock *d)
+{
+    gboolean composited = gdk_screen_is_composited(screen) && gdk_screen_get_rgba_visual(screen);
+    if (composited == d->composited)
+        return;
+    if (d->menu)
+        gtk_menu_popdown(GTK_MENU(d->menu));
+    if (d->tick_id) {
+        gtk_widget_remove_tick_callback(d->area, d->tick_id);
+        d->tick_id = 0;
+    }
+    gboolean visible = gtk_widget_get_visible(d->window);
+    gtk_widget_hide(d->window);
+    gtk_widget_unrealize(d->window);
+    g_clear_pointer(&d->shape, cairo_region_destroy); /* went away with the old X window */
+    memset(&d->input_rect, 0, sizeof d->input_rect);
+    setup_visual(d);
+    if (visible)
+        gtk_widget_show(d->window); /* realizes it again: on_realize sets the strut */
+    place(d);
+    refresh(d);
+    animate(d);
+}
+
 /* ---- settings ------------------------------------------------------------ */
 
 static const Theme *theme_for(const DockConfig *cfg)
@@ -1176,11 +1287,7 @@ Dock *dock_new(GtkApplication *app, DockConfig *cfg)
     gtk_window_stick(win);
     gtk_widget_set_app_paintable(d->window, TRUE);
     GdkScreen *screen = gtk_widget_get_screen(d->window);
-    GdkVisual *visual = gdk_screen_get_rgba_visual(screen);
-    if (visual && gdk_screen_is_composited(screen))
-        gtk_widget_set_visual(d->window, visual);
-    else
-        g_warning("no compositor running, transparency disabled");
+    setup_visual(d);
 
     AppTrackerCallbacks callbacks = { on_items_changed, on_item_removed, d };
     d->tracker = app_tracker_new(cfg, &callbacks);
@@ -1198,6 +1305,7 @@ Dock *dock_new(GtkApplication *app, DockConfig *cfg)
 
     g_signal_connect(d->window, "realize", G_CALLBACK(on_realize), d);
     g_signal_connect(screen, "monitors-changed", G_CALLBACK(on_monitors_changed), d);
+    g_signal_connect(screen, "composited-changed", G_CALLBACK(on_composited_changed), d);
     g_signal_connect(gtk_icon_theme_get_default(), "changed", G_CALLBACK(on_icon_theme_changed), d);
     place(d);
     return d;

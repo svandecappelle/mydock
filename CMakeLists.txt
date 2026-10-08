@@ -15,6 +15,7 @@ pkg_check_modules(DEPS REQUIRED IMPORTED_TARGET
   gio-unix-2.0
   libwnck-3.0
   x11
+  xext
 )
 
 add_executable(macdock
