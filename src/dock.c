@@ -1115,6 +1115,9 @@ static void on_icon_theme_changed(GtkIconTheme *theme, Dock *d)
 
 static void on_realize(GtkWidget *widget, Dock *d)
 {
+    /* Show on every desktop. GTK forgets this when the window is recreated
+     * (see on_composited_changed), so ask again each time. */
+    gtk_window_stick(GTK_WINDOW(d->window));
     platform_setup_dock_window(d->window);
     update_strut(d);
     refresh(d);
@@ -1226,7 +1229,6 @@ Dock *dock_new(GtkApplication *app, DockConfig *cfg)
     gtk_window_set_skip_pager_hint(win, TRUE);
     gtk_window_set_keep_above(win, TRUE);
     gtk_window_set_accept_focus(win, FALSE);
-    gtk_window_stick(win);
     gtk_widget_set_app_paintable(d->window, TRUE);
     GdkScreen *screen = gtk_widget_get_screen(d->window);
     setup_visual(d);
