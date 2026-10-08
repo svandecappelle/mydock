@@ -1,11 +1,11 @@
 pkgbase = macdock-git
 	pkgdesc = A macOS-style dock for X11 Linux desktops
-	pkgver = 0.1.0.r11.gf43df58
+	pkgver = 0.1.0.r6.g3271dae
 	pkgrel = 1
 	url = https://github.com/svandecappelle/mydock
 	arch = x86_64
 	arch = aarch64
-	license = LicenseRef-unknown
+	license = MIT
 	makedepends = git
 	makedepends = cmake
 	makedepends = pkgconf

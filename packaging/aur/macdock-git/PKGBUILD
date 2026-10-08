@@ -7,7 +7,7 @@ pkgrel=1
 pkgdesc='A macOS-style dock for X11 Linux desktops'
 arch=('x86_64' 'aarch64')
 url='https://github.com/svandecappelle/mydock'
-license=('LicenseRef-unknown')
+license=('MIT')
 depends=('glib2' 'gtk3' 'cairo' 'pango' 'gdk-pixbuf2' 'libwnck3' 'libx11' 'libxext')
 makedepends=('git' 'cmake' 'pkgconf')
 optdepends=('picom: compositor for the translucent look')
@@ -40,4 +40,5 @@ build() {
 package() {
   DESTDIR="$pkgdir" cmake --install build
   install -Dm644 "$_pkgname/README.md" "$pkgdir/usr/share/doc/$_pkgname/README.md"
+  install -Dm644 "$_pkgname/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }

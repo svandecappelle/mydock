@@ -304,3 +304,7 @@ cmake --build build-asan && ASAN_OPTIONS=detect_leaks=0 ./build-asan/macdock
 - Window previews on hover
 - Badges and progress bars (Unity LauncherEntry D-Bus API)
 - Wayland support through gtk-layer-shell (wlroots compositors)
+
+## License
+
+MIT, see [LICENSE](LICENSE).
