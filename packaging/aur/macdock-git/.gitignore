@@ -1,0 +1,6 @@
+# makepkg output
+/src/
+/pkg/
+/macdock/
+*.pkg.tar.*
+*.log

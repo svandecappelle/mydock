@@ -20,6 +20,32 @@ is included (see [Windows](#windows)).
 - Optional auto-hide: the dock slides away and comes back when the pointer touches the screen edge
 - One "Dock size" setting scales the whole dock; it shrinks automatically when the icons would not fit the screen edge
 
+## Install from the AUR (Arch Linux)
+
+`macdock-git` builds the latest commit from GitHub:
+
+```sh
+yay -S macdock-git            # or paru, or by hand:
+git clone https://aur.archlinux.org/macdock-git.git
+cd macdock-git && makepkg -si
+```
+
+Then start it from the menu or a terminal (`macdock`), and copy
+`/usr/share/applications/macdock.desktop` to `~/.config/autostart/` to start
+it at login. The package files live in `packaging/aur/macdock-git/`.
+
+To publish an update to the AUR, from `packaging/aur/macdock-git/`:
+
+```sh
+makepkg --printsrcinfo > .SRCINFO   # after editing the PKGBUILD
+git clone ssh://aur@aur.archlinux.org/macdock-git.git /tmp/aur-macdock
+cp PKGBUILD .SRCINFO /tmp/aur-macdock/
+cd /tmp/aur-macdock && git add PKGBUILD .SRCINFO && git commit -m "Update" && git push
+```
+
+A `-git` package rebuilds from the newest commit on every install, so
+`pkgver` and `.SRCINFO` only need updating when the PKGBUILD itself changes.
+
 ## Build
 
 Dependencies:

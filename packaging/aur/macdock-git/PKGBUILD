@@ -1,0 +1,43 @@
+# Maintainer: Steeve Vandecappelle <steeve.vandecappelle@gmail.com>
+
+pkgname=macdock-git
+_pkgname=macdock
+pkgver=0.1.0.r6.g3271dae
+pkgrel=1
+pkgdesc='A macOS-style dock for X11 Linux desktops'
+arch=('x86_64' 'aarch64')
+url='https://github.com/svandecappelle/mydock'
+license=('LicenseRef-unknown')
+depends=('glib2' 'gtk3' 'cairo' 'pango' 'gdk-pixbuf2' 'libwnck3' 'libx11' 'libxext')
+makedepends=('git' 'cmake' 'pkgconf')
+optdepends=('picom: compositor for the translucent look')
+provides=("$_pkgname")
+conflicts=("$_pkgname")
+source=("$_pkgname::git+$url.git")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "$_pkgname"
+  # 0.1.0.r<commits>.g<hash>: the CMake project version, then the commits
+  # since the last tag (or since the start, before the first release).
+  local version
+  version=$(sed -n 's/^project(macdock VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+  if git describe --long --tags --abbrev=7 >/dev/null 2>&1; then
+    git describe --long --tags --abbrev=7 | sed 's/^v//; s/-\([0-9]*\)-g/.r\1.g/'
+  else
+    printf '%s.r%s.g%s' "$version" "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+  fi
+}
+
+build() {
+  cmake -S "$_pkgname" -B build \
+    -DCMAKE_BUILD_TYPE=None \
+    -DCMAKE_INSTALL_PREFIX=/usr \
+    -Wno-dev
+  cmake --build build
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+  install -Dm644 "$_pkgname/README.md" "$pkgdir/usr/share/doc/$_pkgname/README.md"
+}
