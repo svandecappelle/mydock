@@ -5,6 +5,7 @@ libwnck (tested on LXQt + Openbox + compton). An experimental Windows build
 is included (see [Windows](#windows)).
 
 - Translucent rounded "glass" bar with a soft shadow
+- Ten colour themes (Dark, Light, Graphite, Clear Glass, Midnight, Nord, Dracula, Solarized, Rosé, High Contrast), or Automatic to follow the desktop's dark or light GTK theme
 - Smooth icon magnification under the pointer
 - App-name tooltip above the hovered icon
 - Bounce animation when launching an app
@@ -115,7 +116,7 @@ file by hand, then restart the dock:
 | `spacing`, `padding` | 6, 8 | gap between icons, bar padding (at size 48; scaled with `icon_size`) |
 | `margin` | 6 | gap between the bar and the screen edge (px, not scaled) |
 | `corner_radius` | 16 | bar corner radius (at size 48; scaled with `icon_size`) |
-| `theme` | `dark` | `dark` or `light` |
+| `theme` | `dark` | `auto` (Dark or Light, after the GTK theme), `dark`, `light`, `graphite`, `clear`, `midnight`, `nord`, `dracula`, `solarized`, `rose`, `high-contrast` |
 | `monitor` | -1 | monitor index, -1 = primary |
 | `reserve_space` | true | stop maximized windows from covering the dock (ignored while auto-hiding) |
 | `expand` | false | stretch the bar along the whole screen edge (icons stay centred) |
@@ -134,6 +135,7 @@ src/config.c    GKeyFile-based config
 src/apps.c      model: DockItem + AppTracker (pinned apps ⟷ open windows)
 src/dock.c      view/controller: the DOCK window, Cairo drawing, animation, input
 src/preferences.c  the "Dock Settings" window
+src/themes.c    the colour themes
 
 Platform interfaces, and their X11 / freedesktop backends:
 src/wm.h        window tracking and window actions   → src/wm_wnck.c (libwnck)

@@ -17,6 +17,7 @@ set(SOURCES
   src/apps.c
   src/dock.c
   src/preferences.c
+  src/themes.c
 )
 
 find_package(PkgConfig REQUIRED)

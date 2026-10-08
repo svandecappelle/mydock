@@ -6,6 +6,7 @@
 #include "apps.h"
 #include "platform.h"
 #include "preferences.h"
+#include "themes.h"
 
 #define LABEL_SPACE 44      /* room beyond the tallest icon for the name label */
 #define LABEL_SPACE_SIDE 240 /* same, beside the icons of a vertical dock */
@@ -19,36 +20,6 @@
 #define HIDE_SPEED 10.0     /* auto-hide slide speed, like ZOOM_SPEED */
 #define TRIGGER_SIZE 2      /* auto-hide: depth of the strip at the screen edge that reveals the dock */
 #define DRAG_THRESHOLD 8    /* pointer travel (px) that turns a press on an icon into a drag */
-
-typedef double Rgba[4];
-
-typedef struct {
-    Rgba bar_top, bar_bottom, border, highlight, shadow, separator, indicator, label_bg, label_fg;
-} Theme;
-
-static const Theme theme_dark = {
-    .bar_top = { 0.24, 0.24, 0.26, 0.55 },
-    .bar_bottom = { 0.13, 0.13, 0.15, 0.65 },
-    .border = { 1, 1, 1, 0.18 },
-    .highlight = { 1, 1, 1, 0.12 },
-    .shadow = { 0, 0, 0, 0.05 },
-    .separator = { 1, 1, 1, 0.28 },
-    .indicator = { 1, 1, 1, 0.85 },
-    .label_bg = { 0.14, 0.14, 0.16, 0.88 },
-    .label_fg = { 1, 1, 1, 0.95 },
-};
-
-static const Theme theme_light = {
-    .bar_top = { 1, 1, 1, 0.55 },
-    .bar_bottom = { 0.90, 0.90, 0.93, 0.62 },
-    .border = { 1, 1, 1, 0.55 },
-    .highlight = { 1, 1, 1, 0.45 },
-    .shadow = { 0, 0, 0, 0.04 },
-    .separator = { 0, 0, 0, 0.22 },
-    .indicator = { 0.1, 0.1, 0.1, 0.8 },
-    .label_bg = { 0.96, 0.96, 0.97, 0.92 },
-    .label_fg = { 0.08, 0.08, 0.08, 0.95 },
-};
 
 /* Where one dock entry is drawn this frame, in dock coordinates (see
  * to_window): `pos` and `len` run along the dock. */
@@ -1170,9 +1141,27 @@ static void on_composited_changed(GdkScreen *screen, Dock *d)
 
 /* ---- settings ------------------------------------------------------------ */
 
+/* For the "auto" theme: GTK's dark-variant preference, or a GTK theme named
+ * like "Adwaita-dark". */
+static gboolean desktop_is_dark(void)
+{
+    GtkSettings *settings = gtk_settings_get_default();
+    gboolean prefer_dark = FALSE;
+    g_autofree char *name = NULL;
+    g_object_get(settings, "gtk-application-prefer-dark-theme", &prefer_dark, "gtk-theme-name", &name, NULL);
+    g_autofree char *folded = name ? g_utf8_casefold(name, -1) : NULL;
+    return prefer_dark || (folded && strstr(folded, "dark"));
+}
+
 static const Theme *theme_for(const DockConfig *cfg)
 {
-    return g_strcmp0(cfg->theme, "light") == 0 ? &theme_light : &theme_dark;
+    return theme_resolve(cfg->theme, desktop_is_dark());
+}
+
+static void on_desktop_theme_changed(GtkSettings *settings, GParamSpec *pspec, Dock *d)
+{
+    d->colors = theme_for(d->cfg);
+    gtk_widget_queue_draw(d->area);
 }
 
 /* The config changed (from the settings window): rebuild everything that
@@ -1251,6 +1240,9 @@ Dock *dock_new(GtkApplication *app, DockConfig *cfg)
     g_signal_connect(screen, "monitors-changed", G_CALLBACK(on_monitors_changed), d);
     g_signal_connect(screen, "composited-changed", G_CALLBACK(on_composited_changed), d);
     g_signal_connect(gtk_icon_theme_get_default(), "changed", G_CALLBACK(on_icon_theme_changed), d);
+    GtkSettings *settings = gtk_settings_get_default();
+    g_signal_connect(settings, "notify::gtk-theme-name", G_CALLBACK(on_desktop_theme_changed), d);
+    g_signal_connect(settings, "notify::gtk-application-prefer-dark-theme", G_CALLBACK(on_desktop_theme_changed), d);
     place(d);
     return d;
 }

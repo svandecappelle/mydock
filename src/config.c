@@ -3,6 +3,7 @@
 #include <errno.h>
 
 #include "appinfo.h"
+#include "themes.h"
 
 #define GROUP "Dock"
 
@@ -78,7 +79,7 @@ void dock_config_reset(DockConfig *cfg)
     cfg->margin = 6;
     cfg->corner_radius = 16;
     g_free(cfg->theme);
-    cfg->theme = g_strdup("dark");
+    cfg->theme = g_strdup(THEME_DEFAULT);
     cfg->monitor = -1;
     cfg->reserve_space = TRUE;
     cfg->autohide = FALSE;

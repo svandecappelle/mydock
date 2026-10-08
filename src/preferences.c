@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "appinfo.h"
+#include "themes.h"
 
 #define SAVE_DELAY_MS 400
 
@@ -138,7 +139,7 @@ static void load_values(Preferences *p)
     DockConfig *c = p->cfg;
     p->updating = TRUE;
     if (!gtk_combo_box_set_active_id(GTK_COMBO_BOX(p->theme), c->theme))
-        gtk_combo_box_set_active_id(GTK_COMBO_BOX(p->theme), "dark");
+        gtk_combo_box_set_active_id(GTK_COMBO_BOX(p->theme), THEME_DEFAULT);
     gtk_range_set_value(GTK_RANGE(p->icon_size), c->icon_size);
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(p->corner_radius), c->corner_radius);
     gtk_switch_set_active(GTK_SWITCH(p->show_labels), c->show_labels);
@@ -273,10 +274,11 @@ static GtkWidget *build_appearance_page(Preferences *p)
 
     GtkWidget *grid = add_section(page, "Appearance");
     p->theme = gtk_combo_box_text_new();
-    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(p->theme), "dark", "Dark");
-    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(p->theme), "light", "Light");
+    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(p->theme), THEME_AUTO, "Automatic");
+    for (guint i = 0; i < theme_count(); i++)
+        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(p->theme), theme_get(i)->id, theme_get(i)->name);
     g_signal_connect(p->theme, "changed", G_CALLBACK(on_theme_changed), p);
-    add_row(grid, "Theme", NULL, p->theme);
+    add_row(grid, "Theme", "Automatic follows the desktop: Dark or Light, after the GTK theme", p->theme);
     p->icon_size = make_scale(24, 128, 2, 0, G_CALLBACK(on_icon_size_changed), p);
     add_row(grid, "Dock size", "Icon size in pixels; padding, spacing and corners scale with it", p->icon_size);
     p->corner_radius = make_spin(p, 0, 40, &p->cfg->corner_radius);

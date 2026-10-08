@@ -30,7 +30,7 @@ typedef struct {
     int padding;            /* inner padding of the bar, at DOCK_BASE_SIZE */
     int margin;             /* gap between bar and screen edge (not scaled) */
     int corner_radius;      /* at DOCK_BASE_SIZE */
-    char *theme;            /* "dark" or "light" */
+    char *theme;            /* theme id, or "auto" (see themes.h) */
     int monitor;            /* -1 = primary monitor */
     gboolean reserve_space; /* keep maximized windows above the dock */
     gboolean autohide;      /* slide out of view until the pointer touches the screen edge */
