@@ -91,13 +91,27 @@ file by hand, then restart the dock:
 ## Design
 
 ```
-CMakeLists.txt  build (pkg-config: gtk+-3.0, gio-unix-2.0, libwnck-3.0, x11, xext)
-src/main.c      GtkApplication entry point (single instance), SIGINT/SIGTERM handling
+CMakeLists.txt  build; picks the platform backend (Linux: gtk+-3.0, gio-unix-2.0, libwnck-3.0, x11, xext)
+
+Portable (GTK3, GIO, Cairo only):
+src/main.c      GtkApplication entry point (single instance)
 src/config.c    GKeyFile-based config
-src/apps.c      model: DockItem + AppTracker (pinned apps ⟷ libwnck windows)
-src/dock.c      view/controller: the DOCK window, Cairo drawing, animation, input, struts
+src/apps.c      model: DockItem + AppTracker (pinned apps ⟷ open windows)
+src/dock.c      view/controller: the DOCK window, Cairo drawing, animation, input
 src/preferences.c  the "Dock Settings" window
+
+Platform interfaces, and their X11 / freedesktop backends:
+src/wm.h        window tracking and window actions   → src/wm_wnck.c (libwnck)
+src/appinfo.h   installed apps, window → app matching → src/appinfo_desktop.c (.desktop files)
+src/platform.h  reserved space, window shape, quit signals → src/platform_x11.c (Xlib, XShape)
 ```
+
+**Platform layer.** The portable files never include X11, libwnck,
+`glib-unix.h` or `GDesktopAppInfo`. Everything specific to the desktop goes
+through three small interfaces, so porting the dock (to Windows, for example)
+means writing three backend files and choosing them in `CMakeLists.txt`.
+Windows are opaque `WmWindow` handles, and apps are plain `GAppInfo`s with a
+string id (the id stored in the pinned list).
 
 **Window.** One undecorated GTK3 window with an RGBA visual and
 `_NET_WM_WINDOW_TYPE_DOCK`. It is sticky, kept above, and does not take focus.
@@ -175,8 +189,10 @@ jitter. The magnified row is then re-centred, so the bar grows to both sides.
 `zoom` eases toward 0 or 1 with an exponential filter, driven by a GTK tick
 callback that only runs while something is animating.
 
-**Window tracking.** libwnck reports when windows open or close and when the
-active window changes. Each window is matched to a `.desktop` file through its
+**Window tracking.** The `wm.h` backend reports windows that belong in a task
+list as they open or close, and when the active window changes. On X11
+(`wm_wnck.c`) these are libwnck's normal and dialog windows that don't skip the
+task list. Each window is matched to an app by `appinfo_desktop.c` through its
 `WM_CLASS`, using these tables in order: `StartupWMClass`, then the desktop id
 (including the last part of reverse-DNS ids), then the executable name. A
 window with no match becomes its own item, using the window's icon.
@@ -208,9 +224,9 @@ cmake --build build-asan && ASAN_OPTIONS=detect_leaks=0 ./build-asan/macdock
 
 ## Ideas for next steps
 
-- Drag and drop to reorder icons, and to pin by dropping a `.desktop` file
-- Auto-hide, or intelligent hide when a window overlaps the dock
-- Left/right dock positions
+- Pin by dropping a `.desktop` file, unpin by dragging an icon off the dock
+- Intelligent hide when a window overlaps the dock
+- Windows backend (`wm_win32.c`, `appinfo_win32.c`, `platform_win32.c`)
 - Window previews on hover
 - Badges and progress bars (Unity LauncherEntry D-Bus API)
 - Wayland support through gtk-layer-shell (wlroots compositors)

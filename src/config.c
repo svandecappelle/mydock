@@ -1,21 +1,10 @@
 #include "config.h"
 
 #include <errno.h>
-#include <gio/gdesktopappinfo.h>
+
+#include "appinfo.h"
 
 #define GROUP "Dock"
-
-/* Pinned on first run, if installed. */
-static const char *const default_pinned[] = {
-    "pcmanfm-qt.desktop",
-    "org.gnome.Nautilus.desktop",
-    "qterminal.desktop",
-    "firefox.desktop",
-    "featherpad.desktop",
-    "vlc.desktop",
-    "lxqt-config.desktop",
-    NULL,
-};
 
 static const char *const position_names[] = { "bottom", "top", "left", "right" };
 
@@ -49,7 +38,7 @@ DockAlignment dock_alignment_from_string(const char *name)
 
 static gboolean app_installed(const char *id)
 {
-    g_autoptr(GDesktopAppInfo) info = g_desktop_app_info_new(id);
+    g_autoptr(GAppInfo) info = app_info_lookup(id);
     return info != NULL;
 }
 
@@ -142,7 +131,7 @@ DockConfig *dock_config_load(void)
             cfg->pinned = g_new0(char *, 1);
     } else {
         GPtrArray *ids = g_ptr_array_new();
-        for (const char *const *id = default_pinned; *id; id++)
+        for (const char *const *id = app_info_default_pinned(); *id; id++)
             if (app_installed(*id))
                 g_ptr_array_add(ids, g_strdup(*id));
         g_ptr_array_add(ids, NULL);

@@ -9,25 +9,35 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
 endif()
 
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(DEPS REQUIRED IMPORTED_TARGET
-  gtk+-3.0
-  gio-unix-2.0
-  libwnck-3.0
-  x11
-  xext
-)
-
-add_executable(macdock
+# Portable code, then one backend per platform for window tracking (wm.h),
+# installed apps (appinfo.h) and the dock window's needs (platform.h).
+set(SOURCES
   src/main.c
   src/config.c
   src/apps.c
   src/dock.c
   src/preferences.c
 )
+
+find_package(PkgConfig REQUIRED)
+if(WIN32)
+  message(FATAL_ERROR "The Windows backend (wm_win32.c, appinfo_win32.c, platform_win32.c) is not written yet")
+else()
+  pkg_check_modules(DEPS REQUIRED IMPORTED_TARGET
+    gtk+-3.0
+    gio-unix-2.0
+    libwnck-3.0
+    x11
+    xext
+  )
+  list(APPEND SOURCES src/wm_wnck.c src/appinfo_desktop.c src/platform_x11.c)
+  set(PLATFORM_DEFINITIONS WNCK_I_KNOW_THIS_IS_UNSTABLE)
+endif()
+
+add_executable(macdock ${SOURCES})
 target_link_libraries(macdock PRIVATE PkgConfig::DEPS m)
 target_compile_definitions(macdock PRIVATE
-  WNCK_I_KNOW_THIS_IS_UNSTABLE
+  ${PLATFORM_DEFINITIONS}
   MACDOCK_VERSION="${PROJECT_VERSION}"
 )
 target_compile_options(macdock PRIVATE -Wall -Wextra -Wno-unused-parameter)

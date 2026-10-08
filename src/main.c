@@ -1,9 +1,8 @@
-#include <glib-unix.h>
 #include <gtk/gtk.h>
-#include <signal.h>
 
 #include "config.h"
 #include "dock.h"
+#include "platform.h"
 
 static Dock *dock;
 static gboolean open_preferences; /* --preferences given to the primary instance */
@@ -72,8 +71,7 @@ int main(int argc, char **argv)
 
     g_signal_connect(app, "handle-local-options", G_CALLBACK(on_local_options), NULL);
     g_signal_connect(app, "activate", G_CALLBACK(on_activate), NULL);
-    g_unix_signal_add(SIGINT, on_quit_signal, app);
-    g_unix_signal_add(SIGTERM, on_quit_signal, app);
+    platform_on_quit_request(on_quit_signal, app);
     int status = g_application_run(G_APPLICATION(app), argc, argv);
     g_object_unref(app);
     return status;

@@ -4,6 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "appinfo.h"
+
 #define SAVE_DELAY_MS 400
 
 struct Preferences {
@@ -345,22 +347,22 @@ static GtkWidget *build_position_page(Preferences *p)
 
 /* ---- Apps page ----------------------------------------------------------- */
 
-static GtkWidget *app_row(GDesktopAppInfo *info)
+static GtkWidget *app_row(GAppInfo *info)
 {
     GtkWidget *row = gtk_list_box_row_new();
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
     g_object_set(box, "margin", 6, NULL);
-    GIcon *gicon = g_app_info_get_icon(G_APP_INFO(info));
+    GIcon *gicon = g_app_info_get_icon(info);
     GtkWidget *image = gicon ? gtk_image_new_from_gicon(gicon, GTK_ICON_SIZE_DND)
                              : gtk_image_new_from_icon_name("application-x-executable", GTK_ICON_SIZE_DND);
     gtk_image_set_pixel_size(GTK_IMAGE(image), 32);
-    GtkWidget *label = gtk_label_new(g_app_info_get_display_name(G_APP_INFO(info)));
+    GtkWidget *label = gtk_label_new(g_app_info_get_display_name(info));
     gtk_label_set_xalign(GTK_LABEL(label), 0);
     gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
     gtk_box_pack_start(GTK_BOX(box), image, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), label, TRUE, TRUE, 0);
     gtk_container_add(GTK_CONTAINER(row), box);
-    g_object_set_data_full(G_OBJECT(row), "id", g_strdup(g_app_info_get_id(G_APP_INFO(info))), g_free);
+    g_object_set_data_full(G_OBJECT(row), "id", g_strdup(g_app_info_get_id(info)), g_free);
     gtk_widget_show_all(row);
     return row;
 }
@@ -389,7 +391,7 @@ static void rebuild_apps(Preferences *p, const char *select_id)
 
     GPtrArray *shown = g_ptr_array_new();
     for (char **id = p->cfg->pinned; *id; id++) {
-        g_autoptr(GDesktopAppInfo) info = g_desktop_app_info_new(*id);
+        g_autoptr(GAppInfo) info = app_info_lookup(*id);
         if (!info)
             continue;
         GtkWidget *row = app_row(info);
@@ -519,18 +521,17 @@ static void on_add(GtkButton *button, Preferences *p)
     gtk_list_box_set_filter_func(GTK_LIST_BOX(list), filter_apps, search, NULL);
 
     GPtrArray *apps = g_ptr_array_new_with_free_func(g_object_unref);
-    GList *all = g_app_info_get_all();
+    GList *all = app_info_list();
     for (GList *l = all; l; l = l->next) {
         GAppInfo *info = l->data;
-        if (G_IS_DESKTOP_APP_INFO(info) && g_app_info_should_show(info)
-            && !g_strv_contains((const char *const *)p->shown_pinned, g_app_info_get_id(info)))
+        if (!g_strv_contains((const char *const *)p->shown_pinned, g_app_info_get_id(info)))
             g_ptr_array_add(apps, g_object_ref(info));
     }
     g_list_free_full(all, g_object_unref);
     g_ptr_array_sort(apps, compare_app_names);
     for (guint i = 0; i < apps->len; i++) {
         GAppInfo *info = g_ptr_array_index(apps, i);
-        GtkWidget *row = app_row(G_DESKTOP_APP_INFO(info));
+        GtkWidget *row = app_row(info);
         g_autofree char *search_text = g_strconcat(g_app_info_get_display_name(info), " ", g_app_info_get_id(info), NULL);
         g_object_set_data_full(G_OBJECT(row), "search", g_utf8_casefold(search_text, -1), g_free);
         gtk_container_add(GTK_CONTAINER(list), row);

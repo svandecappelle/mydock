@@ -1,12 +1,10 @@
 #include "dock.h"
 
-#include <X11/Xatom.h>
-#include <X11/extensions/shape.h>
-#include <gdk/gdkx.h>
 #include <math.h>
 #include <string.h>
 
 #include "apps.h"
+#include "platform.h"
 #include "preferences.h"
 
 #define LABEL_SPACE 44      /* room beyond the tallest icon for the name label */
@@ -203,59 +201,15 @@ static GdkMonitor *dock_monitor(void)
     return monitor ? monitor : gdk_display_get_monitor(display, 0);
 }
 
-/* Ask the window manager to keep the bar's strip along the screen edge free
- * (_NET_WM_STRUT_PARTIAL); GTK3 has no API for it. */
+/* Keep the bar's strip along the screen edge free of maximized windows. */
 static void update_strut(Dock *d)
 {
-    GdkWindow *gdk_window = gtk_widget_get_window(d->window);
-    if (!gdk_window)
+    if (!gtk_widget_get_realized(d->window))
         return;
-    Display *dpy = GDK_WINDOW_XDISPLAY(gdk_window);
-    Window xid = GDK_WINDOW_XID(gdk_window);
     d->strut_size = d->size;
-    if (!d->cfg->reserve_space || d->cfg->autohide) {
-        XDeleteProperty(dpy, xid, XInternAtom(dpy, "_NET_WM_STRUT_PARTIAL", False));
-        XDeleteProperty(dpy, xid, XInternAtom(dpy, "_NET_WM_STRUT", False));
-        return;
-    }
-    /* Struts are relative to the edges of the whole screen, not the monitor. */
-    GdkDisplay *display = gdk_display_get_default();
-    long screen_w = 0, screen_h = 0;
-    for (int i = 0; i < gdk_display_get_n_monitors(display); i++) {
-        GdkRectangle m;
-        gdk_monitor_get_geometry(gdk_display_get_monitor(display, i), &m);
-        screen_w = MAX(screen_w, m.x + m.width);
-        screen_h = MAX(screen_h, m.y + m.height);
-    }
-    const GdkRectangle *g = &d->monitor_geo;
-    long sf = gtk_widget_get_scale_factor(d->window);
-    long thick = (long)bar_thickness(d) + d->cfg->margin;
-    /* left, right, top, bottom, then start/end pairs for each of them */
-    long partial[12] = { 0 };
-    switch (d->cfg->position) {
-    case DOCK_TOP:
-        partial[2] = g->y + thick;
-        partial[8] = g->x, partial[9] = g->x + g->width - 1;
-        break;
-    case DOCK_LEFT:
-        partial[0] = g->x + thick;
-        partial[4] = g->y, partial[5] = g->y + g->height - 1;
-        break;
-    case DOCK_RIGHT:
-        partial[1] = screen_w - (g->x + g->width) + thick;
-        partial[6] = g->y, partial[7] = g->y + g->height - 1;
-        break;
-    default:
-        partial[3] = screen_h - (g->y + g->height) + thick;
-        partial[10] = g->x, partial[11] = g->x + g->width - 1;
-        break;
-    }
-    for (int i = 0; i < 12; i++)
-        partial[i] *= sf;
-    XChangeProperty(dpy, xid, XInternAtom(dpy, "_NET_WM_STRUT_PARTIAL", False), XA_CARDINAL, 32,
-                    PropModeReplace, (unsigned char *)partial, 12);
-    XChangeProperty(dpy, xid, XInternAtom(dpy, "_NET_WM_STRUT", False), XA_CARDINAL, 32,
-                    PropModeReplace, (unsigned char *)partial, 4);
+    gboolean reserve = d->cfg->reserve_space && !d->cfg->autohide;
+    int thickness = reserve ? (int)bar_thickness(d) + d->cfg->margin : 0;
+    platform_reserve_space(d->window, d->cfg->position, &d->monitor_geo, thickness);
 }
 
 static void place(Dock *d)
@@ -788,30 +742,9 @@ static void draw_scene(Dock *d, cairo_t *cr)
     }
 }
 
-/* Set the X window's bounding shape directly: GDK keeps its own idea of a
- * toplevel's shape and can reset what gtk_widget_shape_combine_region() set
- * (seen right after startup), so leave GDK out of it. */
-static void set_window_shape(Dock *d, const cairo_region_t *region)
-{
-    GdkWindow *gdk_window = gtk_widget_get_window(d->window);
-    if (!gdk_window)
-        return;
-    int sf = gtk_widget_get_scale_factor(d->window);
-    int n = cairo_region_num_rectangles(region);
-    XRectangle *rects = g_new(XRectangle, MAX(n, 1));
-    for (int i = 0; i < n; i++) {
-        cairo_rectangle_int_t r;
-        cairo_region_get_rectangle(region, i, &r);
-        rects[i] = (XRectangle){ r.x * sf, r.y * sf, r.width * sf, r.height * sf };
-    }
-    XShapeCombineRectangles(GDK_WINDOW_XDISPLAY(gdk_window), GDK_WINDOW_XID(gdk_window), ShapeBounding,
-                            0, 0, rects, n, ShapeSet, Unsorted);
-    g_free(rects);
-}
-
 /* Without a compositor, transparent pixels would show as black and hide the
- * windows below. Instead the window is cut to the shape of what is drawn (X
- * Shape extension): render the frame off-screen, take the region of its
+ * windows below. Instead the window is cut to the shape of what is drawn:
+ * render the frame off-screen, take the region of its
  * opaque pixels as the window shape, then copy it to the window. */
 static void draw_shaped(Dock *d, GtkWidget *widget, cairo_t *cr)
 {
@@ -827,7 +760,7 @@ static void draw_shaped(Dock *d, GtkWidget *widget, cairo_t *cr)
     if (d->shape && cairo_region_equal(shape, d->shape)) {
         cairo_region_destroy(shape);
     } else {
-        set_window_shape(d, shape);
+        platform_set_window_shape(d->window, shape);
         g_clear_pointer(&d->shape, cairo_region_destroy);
         d->shape = shape;
     }
@@ -857,7 +790,7 @@ static gboolean on_draw(GtkWidget *widget, cairo_t *cr, Dock *d)
 
 static void on_menu_window(GtkMenuItem *mi, Dock *d)
 {
-    WnckWindow *w = g_object_get_data(G_OBJECT(mi), "window");
+    WmWindow *w = g_object_get_data(G_OBJECT(mi), "window");
     if (app_tracker_has_window(d->tracker, w)) /* it may have closed meanwhile */
         app_tracker_activate_window(d->tracker, w, gtk_get_current_event_time());
 }
@@ -931,7 +864,7 @@ static void show_menu(Dock *d, const Slot *sl, GdkEvent *event)
     DockItem *item = sl->item;
     GList *windows = app_tracker_stacked_windows(d->tracker, item);
     for (GList *l = g_list_last(windows); l; l = l->prev) {
-        const char *title = wnck_window_get_name(l->data);
+        const char *title = wm_window_get_title(l->data);
         g_autofree char *head = g_utf8_substring(title, 0, 49);
         g_autofree char *label = g_utf8_strlen(title, -1) > 50 ? g_strconcat(head, "…", NULL) : g_strdup(title);
         GtkWidget *mi = gtk_menu_item_new_with_label(label);
@@ -1186,7 +1119,7 @@ static void on_monitors_changed(GdkScreen *screen, Dock *d)
 
 /* Use a transparent (RGBA) window when a compositor runs, or an ordinary
  * one cut to shape otherwise (see draw_shaped). The window must not be
- * realized yet: X windows can't change their visual. */
+ * realized yet: a native window can't change its visual. */
 static void setup_visual(Dock *d)
 {
     GdkScreen *screen = gtk_widget_get_screen(d->window);
@@ -1198,7 +1131,7 @@ static void setup_visual(Dock *d)
 }
 
 /* A compositor started or stopped (at login the dock may well start first):
- * recreate the X window with the right visual. */
+ * recreate the native window with the right visual. */
 static void on_composited_changed(GdkScreen *screen, Dock *d)
 {
     gboolean composited = gdk_screen_is_composited(screen) && gdk_screen_get_rgba_visual(screen);
@@ -1213,7 +1146,7 @@ static void on_composited_changed(GdkScreen *screen, Dock *d)
     gboolean visible = gtk_widget_get_visible(d->window);
     gtk_widget_hide(d->window);
     gtk_widget_unrealize(d->window);
-    g_clear_pointer(&d->shape, cairo_region_destroy); /* went away with the old X window */
+    g_clear_pointer(&d->shape, cairo_region_destroy); /* went away with the old native window */
     memset(&d->input_rect, 0, sizeof d->input_rect);
     setup_visual(d);
     if (visible)

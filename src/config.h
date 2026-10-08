@@ -36,7 +36,7 @@ typedef struct {
     gboolean autohide;      /* slide out of view until the pointer touches the screen edge */
     gboolean expand;        /* stretch the bar along the whole screen edge, like a panel */
     gboolean show_labels;
-    char **pinned;          /* NULL-terminated list of desktop ids */
+    char **pinned;          /* NULL-terminated list of app ids (see appinfo.h) */
     char *path;
 } DockConfig;
 

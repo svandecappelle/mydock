@@ -1,24 +1,19 @@
 #include "apps.h"
 
-#include <string.h>
-
-#define N_TIERS 3
+#include "appinfo.h"
 
 struct AppTracker {
     DockConfig *cfg;
     AppTrackerCallbacks cb;
-    WnckHandle *wnck;
-    WnckScreen *screen;
+    Wm *wm;
+    AppIndex *apps;
     GPtrArray *items;            /* DockItem* (owned, freed by hand) */
-    GHashTable *window_items;    /* WnckWindow* -> DockItem* */
-    /* Lowercase name -> GDesktopAppInfo, in decreasing reliability:
-     * StartupWMClass, desktop id (and its last dotted part), executable name. */
-    GHashTable *index[N_TIERS];
+    GHashTable *window_items;    /* WmWindow* -> DockItem* */
 };
 
 /* ---- DockItem ------------------------------------------------------------ */
 
-static DockItem *dock_item_new(const char *key, GDesktopAppInfo *info, gboolean pinned)
+static DockItem *dock_item_new(const char *key, GAppInfo *info, gboolean pinned)
 {
     DockItem *item = g_new0(DockItem, 1);
     item->key = g_strdup(key);
@@ -40,11 +35,11 @@ static void dock_item_free(DockItem *item)
 const char *dock_item_name(DockItem *item)
 {
     if (item->app_info)
-        return g_app_info_get_display_name(G_APP_INFO(item->app_info));
+        return g_app_info_get_display_name(item->app_info);
     if (item->windows) {
-        WnckWindow *w = item->windows->data;
-        const char *name = wnck_window_get_class_group_name(w);
-        return name && *name ? name : wnck_window_get_name(w);
+        WmWindow *w = item->windows->data;
+        const char *name = wm_window_get_app_group(w);
+        return name && *name ? name : wm_window_get_title(w);
     }
     return item->key;
 }
@@ -52,7 +47,7 @@ const char *dock_item_name(DockItem *item)
 static GdkPixbuf *load_icon(DockItem *item, int size)
 {
     GtkIconTheme *theme = gtk_icon_theme_get_default();
-    GIcon *gicon = item->app_info ? g_app_info_get_icon(G_APP_INFO(item->app_info)) : NULL;
+    GIcon *gicon = item->app_info ? g_app_info_get_icon(item->app_info) : NULL;
     if (gicon) {
         GtkIconInfo *info = gtk_icon_theme_lookup_by_gicon(theme, gicon, size, GTK_ICON_LOOKUP_FORCE_SIZE);
         if (info) {
@@ -62,9 +57,11 @@ static GdkPixbuf *load_icon(DockItem *item, int size)
                 return pixbuf;
         }
     }
-    for (GList *l = item->windows; l; l = l->next)
-        if (!wnck_window_get_icon_is_fallback(l->data))
-            return g_object_ref(wnck_window_get_icon(l->data));
+    for (GList *l = item->windows; l; l = l->next) {
+        GdkPixbuf *icon = wm_window_get_icon(l->data);
+        if (icon)
+            return g_object_ref(icon);
+    }
 
     GdkPixbuf *pixbuf = gtk_icon_theme_load_icon(theme, "application-x-executable", size,
                                                  GTK_ICON_LOOKUP_FORCE_SIZE, NULL);
@@ -90,85 +87,18 @@ void dock_item_clear_icons(DockItem *item)
     g_hash_table_remove_all(item->icons);
 }
 
-/* ---- window -> application matching -------------------------------------- */
+/* ---- window bookkeeping -------------------------------------------------- */
 
-static void index_add(GHashTable *table, const char *name, GDesktopAppInfo *info)
-{
-    char *key = g_ascii_strdown(name, -1);
-    if (g_hash_table_contains(table, key))
-        g_free(key);
-    else
-        g_hash_table_insert(table, key, g_object_ref(info));
-}
-
-static void build_index(AppTracker *t)
-{
-    for (int i = 0; i < N_TIERS; i++)
-        g_hash_table_remove_all(t->index[i]);
-
-    GList *all = g_app_info_get_all();
-    for (GList *l = all; l; l = l->next) {
-        if (!G_IS_DESKTOP_APP_INFO(l->data))
-            continue;
-        GDesktopAppInfo *info = l->data;
-
-        const char *wm_class = g_desktop_app_info_get_startup_wm_class(info);
-        if (wm_class)
-            index_add(t->index[0], wm_class, info);
-
-        const char *id = g_app_info_get_id(G_APP_INFO(info));
-        if (id) {
-            g_autofree char *base = g_str_has_suffix(id, ".desktop")
-                ? g_strndup(id, strlen(id) - strlen(".desktop")) : g_strdup(id);
-            index_add(t->index[1], base, info);
-            const char *dot = strrchr(base, '.');
-            if (dot)
-                index_add(t->index[1], dot + 1, info);
-        }
-
-        const char *exe = g_app_info_get_executable(G_APP_INFO(info));
-        if (exe) {
-            g_autofree char *exe_name = g_path_get_basename(exe);
-            index_add(t->index[2], exe_name, info);
-        }
-    }
-    g_list_free_full(all, g_object_unref);
-}
-
-static GDesktopAppInfo *match_window(AppTracker *t, WnckWindow *w)
-{
-    const char *names[] = { wnck_window_get_class_instance_name(w), wnck_window_get_class_group_name(w) };
-    for (int tier = 0; tier < N_TIERS; tier++) {
-        for (guint n = 0; n < G_N_ELEMENTS(names); n++) {
-            if (!names[n] || !*names[n])
-                continue;
-            g_autofree char *key = g_ascii_strdown(names[n], -1);
-            GDesktopAppInfo *info = g_hash_table_lookup(t->index[tier], key);
-            if (info)
-                return info;
-        }
-    }
-    return NULL;
-}
-
-static char *key_for(WnckWindow *w, GDesktopAppInfo *info)
+static char *key_for(WmWindow *w, GAppInfo *info)
 {
     if (info)
-        return g_strdup(g_app_info_get_id(G_APP_INFO(info)));
-    const char *group = wnck_window_get_class_group_name(w);
+        return g_strdup(g_app_info_get_id(info));
+    const char *group = wm_window_get_app_group(w);
     if (group && *group) {
         g_autofree char *lower = g_ascii_strdown(group, -1);
         return g_strconcat("wmclass:", lower, NULL);
     }
-    return g_strdup_printf("wmclass:pid-%d", wnck_window_get_pid(w));
-}
-
-/* ---- window bookkeeping -------------------------------------------------- */
-
-static gboolean is_tracked(WnckWindow *w)
-{
-    WnckWindowType type = wnck_window_get_window_type(w);
-    return (type == WNCK_WINDOW_NORMAL || type == WNCK_WINDOW_DIALOG) && !wnck_window_is_skip_tasklist(w);
+    return g_strdup_printf("wmclass:pid-%d", wm_window_get_pid(w));
 }
 
 static DockItem *find_item(AppTracker *t, const char *key)
@@ -193,11 +123,11 @@ static void remove_item(AppTracker *t, DockItem *item)
     dock_item_free(item);
 }
 
-static void add_window(AppTracker *t, WnckWindow *w, gboolean do_notify)
+static void add_window(AppTracker *t, WmWindow *w, gboolean do_notify)
 {
-    if (!is_tracked(w) || g_hash_table_contains(t->window_items, w))
+    if (g_hash_table_contains(t->window_items, w))
         return;
-    GDesktopAppInfo *info = match_window(t, w);
+    GAppInfo *info = app_index_match(t->apps, w);
     g_autofree char *key = key_for(w, info);
     DockItem *item = find_item(t, key);
     if (!item) {
@@ -210,7 +140,7 @@ static void add_window(AppTracker *t, WnckWindow *w, gboolean do_notify)
         notify(t);
 }
 
-static void remove_window(AppTracker *t, WnckWindow *w, gboolean do_notify)
+static void remove_window(AppTracker *t, WmWindow *w, gboolean do_notify)
 {
     DockItem *item = g_hash_table_lookup(t->window_items, w);
     if (!item)
@@ -223,30 +153,22 @@ static void remove_window(AppTracker *t, WnckWindow *w, gboolean do_notify)
         notify(t);
 }
 
-/* Re-file a window whose class or skip-tasklist state changed. */
-static void on_window_changed(WnckWindow *w, AppTracker *t)
+/* Re-file a window that now claims to belong to another app. */
+static void on_window_app_changed(WmWindow *w, gpointer data)
 {
+    AppTracker *t = data;
     DockItem *current = g_hash_table_lookup(t->window_items, w);
-    if (is_tracked(w)) {
-        g_autofree char *key = key_for(w, match_window(t, w));
-        if (current && g_str_equal(current->key, key))
-            return;
-    } else if (!current) {
+    g_autofree char *key = key_for(w, app_index_match(t->apps, w));
+    if (current && g_str_equal(current->key, key))
         return;
-    }
     remove_window(t, w, FALSE);
     add_window(t, w, FALSE);
     notify(t);
 }
 
-static void on_window_state_changed(WnckWindow *w, WnckWindowState changed, WnckWindowState state, AppTracker *t)
+static void on_window_icon_changed(WmWindow *w, gpointer data)
 {
-    if (changed & WNCK_WINDOW_STATE_SKIP_TASKLIST)
-        on_window_changed(w, t);
-}
-
-static void on_window_icon_changed(WnckWindow *w, AppTracker *t)
-{
+    AppTracker *t = data;
     DockItem *item = g_hash_table_lookup(t->window_items, w);
     if (item && !item->app_info) {
         dock_item_clear_icons(item);
@@ -254,27 +176,19 @@ static void on_window_icon_changed(WnckWindow *w, AppTracker *t)
     }
 }
 
-static void on_window_opened(WnckScreen *screen, WnckWindow *w, AppTracker *t)
+static void on_window_opened(WmWindow *w, gpointer data)
 {
-    g_signal_connect(w, "class-changed", G_CALLBACK(on_window_changed), t);
-    g_signal_connect(w, "state-changed", G_CALLBACK(on_window_state_changed), t);
-    g_signal_connect(w, "icon-changed", G_CALLBACK(on_window_icon_changed), t);
-    add_window(t, w, TRUE);
+    add_window(data, w, TRUE);
 }
 
-static void on_window_closed(WnckScreen *screen, WnckWindow *w, AppTracker *t)
+static void on_window_closed(WmWindow *w, gpointer data)
 {
-    remove_window(t, w, TRUE);
+    remove_window(data, w, TRUE);
 }
 
-static void on_active_window_changed(WnckScreen *screen, WnckWindow *previous, AppTracker *t)
+static void on_active_window_changed(gpointer data)
 {
-    notify(t);
-}
-
-static void on_apps_changed(GAppInfoMonitor *monitor, AppTracker *t)
-{
-    build_index(t);
+    notify(data);
 }
 
 AppTracker *app_tracker_new(DockConfig *cfg, const AppTrackerCallbacks *callbacks)
@@ -284,30 +198,23 @@ AppTracker *app_tracker_new(DockConfig *cfg, const AppTrackerCallbacks *callback
     t->cb = *callbacks;
     t->items = g_ptr_array_new();
     t->window_items = g_hash_table_new(g_direct_hash, g_direct_equal);
-    for (int i = 0; i < N_TIERS; i++)
-        t->index[i] = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_object_unref);
-    build_index(t);
-    g_signal_connect(g_app_info_monitor_get(), "changed", G_CALLBACK(on_apps_changed), t);
+    t->apps = app_index_new();
 
     for (char **id = cfg->pinned; *id; id++) {
-        g_autoptr(GDesktopAppInfo) info = g_desktop_app_info_new(*id);
+        g_autoptr(GAppInfo) info = app_info_lookup(*id);
         if (info && !find_item(t, *id))
             g_ptr_array_add(t->items, dock_item_new(*id, info, TRUE));
     }
 
-    t->wnck = wnck_handle_new(WNCK_CLIENT_TYPE_APPLICATION);
-    wnck_handle_set_default_icon_size(t->wnck, 128);
-    t->screen = wnck_handle_get_default_screen(t->wnck);
-    wnck_screen_force_update(t->screen);
-    for (GList *l = wnck_screen_get_windows(t->screen); l; l = l->next) {
-        g_signal_connect(l->data, "class-changed", G_CALLBACK(on_window_changed), t);
-        g_signal_connect(l->data, "state-changed", G_CALLBACK(on_window_state_changed), t);
-        g_signal_connect(l->data, "icon-changed", G_CALLBACK(on_window_icon_changed), t);
+    WmCallbacks wm_callbacks = {
+        on_window_opened, on_window_closed, on_window_app_changed, on_window_icon_changed,
+        on_active_window_changed, t,
+    };
+    t->wm = wm_new(&wm_callbacks);
+    GList *windows = wm_get_windows(t->wm);
+    for (GList *l = windows; l; l = l->next)
         add_window(t, l->data, FALSE);
-    }
-    g_signal_connect(t->screen, "window-opened", G_CALLBACK(on_window_opened), t);
-    g_signal_connect(t->screen, "window-closed", G_CALLBACK(on_window_closed), t);
-    g_signal_connect(t->screen, "active-window-changed", G_CALLBACK(on_active_window_changed), t);
+    g_list_free(windows);
     return t;
 }
 
@@ -316,7 +223,7 @@ GPtrArray *app_tracker_items(AppTracker *t)
     return t->items;
 }
 
-gboolean app_tracker_has_window(AppTracker *t, WnckWindow *window)
+gboolean app_tracker_has_window(AppTracker *t, WmWindow *window)
 {
     return g_hash_table_contains(t->window_items, window);
 }
@@ -325,25 +232,24 @@ gboolean app_tracker_has_window(AppTracker *t, WnckWindow *window)
 
 gboolean app_tracker_is_active(AppTracker *t, DockItem *item)
 {
-    WnckWindow *active = wnck_screen_get_active_window(t->screen);
+    WmWindow *active = wm_get_active_window(t->wm);
     return active && g_list_find(item->windows, active);
 }
 
 GList *app_tracker_stacked_windows(AppTracker *t, DockItem *item)
 {
+    GList *stacked = wm_get_windows_stacked(t->wm);
     GList *result = NULL;
-    for (GList *l = wnck_screen_get_windows_stacked(t->screen); l; l = l->next)
+    for (GList *l = stacked; l; l = l->next)
         if (g_list_find(item->windows, l->data))
             result = g_list_prepend(result, l->data);
+    g_list_free(stacked);
     return g_list_reverse(result);
 }
 
-void app_tracker_activate_window(AppTracker *t, WnckWindow *window, guint32 timestamp)
+void app_tracker_activate_window(AppTracker *t, WmWindow *window, guint32 timestamp)
 {
-    WnckWorkspace *ws = wnck_window_get_workspace(window);
-    if (ws && ws != wnck_screen_get_active_workspace(t->screen))
-        wnck_workspace_activate(ws, timestamp);
-    wnck_window_activate_transient(window, timestamp);
+    wm_window_activate(t->wm, window, timestamp);
 }
 
 /* Dock click: launch, raise, cycle or minimize, like the macOS dock. */
@@ -358,17 +264,17 @@ void app_tracker_activate(AppTracker *t, DockItem *item, guint32 timestamp)
         if (windows->next)
             app_tracker_activate_window(t, windows->data, timestamp); /* cycle to the bottom-most */
         else
-            wnck_window_minimize(windows->data);
+            wm_window_minimize(windows->data);
     } else {
-        WnckWindow *top_visible = NULL;
+        WmWindow *top_visible = NULL;
         for (GList *l = windows; l; l = l->next)
-            if (!wnck_window_is_minimized(l->data))
+            if (!wm_window_is_minimized(l->data))
                 top_visible = l->data;
         if (top_visible) {
             app_tracker_activate_window(t, top_visible, timestamp);
         } else {
             for (GList *l = windows; l; l = l->next)
-                wnck_window_unminimize(l->data, timestamp);
+                wm_window_unminimize(l->data, timestamp);
             app_tracker_activate_window(t, g_list_last(windows)->data, timestamp);
         }
     }
@@ -382,7 +288,7 @@ void app_tracker_launch(AppTracker *t, DockItem *item, guint32 timestamp)
     g_autoptr(GdkAppLaunchContext) ctx = gdk_display_get_app_launch_context(gdk_display_get_default());
     gdk_app_launch_context_set_timestamp(ctx, timestamp);
     g_autoptr(GError) err = NULL;
-    if (!g_app_info_launch(G_APP_INFO(item->app_info), NULL, G_APP_LAUNCH_CONTEXT(ctx), &err)) {
+    if (!g_app_info_launch(item->app_info, NULL, G_APP_LAUNCH_CONTEXT(ctx), &err)) {
         g_warning("cannot launch %s: %s", item->key, err->message);
         return;
     }
@@ -394,7 +300,7 @@ void app_tracker_close_all(AppTracker *t, DockItem *item, guint32 timestamp)
 {
     GList *windows = g_list_copy(item->windows); /* closing may modify the list */
     for (GList *l = windows; l; l = l->next)
-        wnck_window_close(l->data, timestamp);
+        wm_window_close(l->data, timestamp);
     g_list_free(windows);
 }
 
@@ -411,7 +317,7 @@ void app_tracker_set_pinned_ids(AppTracker *t, const char *const *ids)
                 continue;
             g_ptr_array_remove(t->items, item);
         } else {
-            g_autoptr(GDesktopAppInfo) info = g_desktop_app_info_new(*id);
+            g_autoptr(GAppInfo) info = app_info_lookup(*id);
             if (!info)
                 continue;
             item = dock_item_new(*id, info, TRUE);
