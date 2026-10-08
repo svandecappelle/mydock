@@ -7,6 +7,14 @@
 /* What the dock window needs from the platform beyond GTK, implemented per
  * platform (platform_x11.c). */
 
+/* Finish setting up the realized dock window beyond what GTK's hints do. */
+void platform_setup_dock_window(GtkWidget *window);
+
+/* TRUE if fully transparent pixels let the pointer through whatever the
+ * input shape (Windows: per-pixel-alpha layered windows). The dock then
+ * paints its input area with an invisible, almost transparent colour. */
+gboolean platform_input_follows_alpha(void);
+
 /* Keep a strip `thickness` px deep along the `position` edge of `monitor`
  * free of maximized windows, or stop doing so if `thickness` is 0. The
  * window must be realized. */

@@ -1,7 +1,8 @@
 # macdock
 
 A macOS-style dock for X11 Linux desktops, written in C with GTK 3, Cairo and
-libwnck (tested on LXQt + Openbox + compton).
+libwnck (tested on LXQt + Openbox + compton). An experimental Windows build
+is included (see [Windows](#windows)).
 
 - Translucent rounded "glass" bar with a soft shadow
 - Smooth icon magnification under the pointer
@@ -45,6 +46,40 @@ compositor starts or stops, the dock switches between the two modes by itself.
 
 For the macOS layout, move the LXQt panel to the top of the screen. Otherwise
 the dock sits on top of it.
+
+## Windows
+
+Experimental: the Windows backend compiles and links, but has not been run
+on Windows yet.
+
+Build with [MSYS2](https://www.msys2.org/), in its UCRT64 shell:
+
+```sh
+pacman -S mingw-w64-ucrt-x86_64-{gcc,cmake,pkgconf,gtk3}
+cmake -S . -B build -G "MSYS Makefiles"
+cmake --build build
+./build/macdock.exe
+```
+
+To run it outside MSYS2, copy `macdock.exe` next to the GTK DLLs it needs
+(`ntldd -R macdock.exe` lists them), and also ship:
+
+- `gdbus.exe`: GLib starts it as a private session bus, which the
+  single-instance check and `macdock --preferences` rely on;
+- `share/icons` (Adwaita and hicolor themes) and `lib/gdk-pixbuf-2.0`
+  (image loaders), from the MSYS2 tree.
+
+Settings are stored in `%LOCALAPPDATA%\macdock\config.ini`. Apps come from
+the Start menu's "All apps" list (desktop programs and Store apps); their id
+in `pinned` is their AppUserModelID. To start the dock at login, put a
+shortcut to `macdock.exe` in `shell:startup`.
+
+The Windows taskbar stays. On the same edge, the dock covers it, so set the
+taskbar to auto-hide or move the dock to another edge.
+
+Linux builds can be checked for Windows by cross-compiling with
+`mingw-w64-gcc` and the MSYS2 `ucrt64` packages, through a CMake toolchain
+file that points pkg-config at them.
 
 ## Configuration
 
@@ -104,12 +139,23 @@ Platform interfaces, and their X11 / freedesktop backends:
 src/wm.h        window tracking and window actions   → src/wm_wnck.c (libwnck)
 src/appinfo.h   installed apps, window → app matching → src/appinfo_desktop.c (.desktop files)
 src/platform.h  reserved space, window shape, quit signals → src/platform_x11.c (Xlib, XShape)
+
+Windows backends (src/win32_util.c: UTF-16, process paths, shell icons):
+src/wm_win32.c        WinEvent hooks, the taskbar's rules for which windows to show
+src/appinfo_win32.c   shell:AppsFolder entries as a GAppInfo, launched through the shell
+src/platform_win32.c  AppBar API, window region, Ctrl+C
 ```
 
 **Platform layer.** The portable files never include X11, libwnck,
 `glib-unix.h` or `GDesktopAppInfo`. Everything specific to the desktop goes
 through three small interfaces, so porting the dock (to Windows, for example)
 means writing three backend files and choosing them in `CMakeLists.txt`.
+Two hooks cover the window itself: `platform_setup_dock_window` (on Windows:
+no taskbar button, no focus on click, topmost) and
+`platform_input_follows_alpha`. On Windows GTK draws the dock as a layered
+window, and clicks pass through its fully transparent pixels whatever the
+input shape says. So the dock paints its input area (the auto-hide trigger
+strip, the margin to the screen edge) at an invisible 1/255 alpha.
 Windows are opaque `WmWindow` handles, and apps are plain `GAppInfo`s with a
 string id (the id stored in the pinned list).
 
@@ -226,7 +272,7 @@ cmake --build build-asan && ASAN_OPTIONS=detect_leaks=0 ./build-asan/macdock
 
 - Pin by dropping a `.desktop` file, unpin by dragging an icon off the dock
 - Intelligent hide when a window overlaps the dock
-- Windows backend (`wm_win32.c`, `appinfo_win32.c`, `platform_win32.c`)
+- Run and package the Windows build (an installer bundling the GTK runtime)
 - Window previews on hover
 - Badges and progress bars (Unity LauncherEntry D-Bus API)
 - Wayland support through gtk-layer-shell (wlroots compositors)

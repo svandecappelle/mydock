@@ -781,6 +781,14 @@ static gboolean on_draw(GtkWidget *widget, cairo_t *cr, Dock *d)
     cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
     cairo_set_source_rgba(cr, 0, 0, 0, 0);
     cairo_paint(cr);
+    if (platform_input_follows_alpha()) {
+        /* Make the input area (the auto-hide trigger strip, the margin to the
+         * screen edge) catch the pointer without showing. */
+        const cairo_rectangle_int_t *r = &d->input_rect;
+        cairo_set_source_rgba(cr, 0, 0, 0, 1 / 255.0);
+        cairo_rectangle(cr, r->x, r->y, r->width, r->height);
+        cairo_fill(cr);
+    }
     cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
     draw_scene(d, cr);
     return TRUE;
@@ -1107,6 +1115,7 @@ static void on_icon_theme_changed(GtkIconTheme *theme, Dock *d)
 
 static void on_realize(GtkWidget *widget, Dock *d)
 {
+    platform_setup_dock_window(d->window);
     update_strut(d);
     refresh(d);
 }

@@ -8,6 +8,16 @@
 #include <glib-unix.h>
 #include <signal.h>
 
+void platform_setup_dock_window(GtkWidget *window)
+{
+    /* GTK's DOCK type hint, keep-above and sticky flags are all X11 needs. */
+}
+
+gboolean platform_input_follows_alpha(void)
+{
+    return FALSE; /* the X input shape decides */
+}
+
 /* GTK3 has no API for this: set _NET_WM_STRUT_PARTIAL (and the older
  * _NET_WM_STRUT) on the window. */
 void platform_reserve_space(GtkWidget *window, DockPosition position, const GdkRectangle *g, int thickness)

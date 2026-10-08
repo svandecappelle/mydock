@@ -21,7 +21,11 @@ set(SOURCES
 
 find_package(PkgConfig REQUIRED)
 if(WIN32)
-  message(FATAL_ERROR "The Windows backend (wm_win32.c, appinfo_win32.c, platform_win32.c) is not written yet")
+  pkg_check_modules(DEPS REQUIRED IMPORTED_TARGET gtk+-3.0)
+  list(APPEND SOURCES src/wm_win32.c src/appinfo_win32.c src/platform_win32.c src/win32_util.c)
+  set(PLATFORM_DEFINITIONS _WIN32_WINNT=0x0A00 WINVER=0x0A00 COBJMACROS)
+  set(PLATFORM_LIBS user32 gdi32 shell32 ole32 dwmapi)
+  set(EXECUTABLE_TYPE WIN32)  # a GUI program: no console window
 else()
   pkg_check_modules(DEPS REQUIRED IMPORTED_TARGET
     gtk+-3.0
@@ -34,8 +38,8 @@ else()
   set(PLATFORM_DEFINITIONS WNCK_I_KNOW_THIS_IS_UNSTABLE)
 endif()
 
-add_executable(macdock ${SOURCES})
-target_link_libraries(macdock PRIVATE PkgConfig::DEPS m)
+add_executable(macdock ${EXECUTABLE_TYPE} ${SOURCES})
+target_link_libraries(macdock PRIVATE PkgConfig::DEPS ${PLATFORM_LIBS} m)
 target_compile_definitions(macdock PRIVATE
   ${PLATFORM_DEFINITIONS}
   MACDOCK_VERSION="${PROJECT_VERSION}"
@@ -44,4 +48,6 @@ target_compile_options(macdock PRIVATE -Wall -Wextra -Wno-unused-parameter)
 
 include(GNUInstallDirs)
 install(TARGETS macdock RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-install(FILES data/macdock.desktop data/macdock-settings.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+if(NOT WIN32)
+  install(FILES data/macdock.desktop data/macdock-settings.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+endif()
